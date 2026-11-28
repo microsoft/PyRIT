@@ -3,6 +3,7 @@
 
 from pathlib import Path
 from textwrap import dedent
+from typing import assert_type
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -524,3 +525,21 @@ def test_likert_init_system_prompt_variants(
             system_prompt=123,
             likert_scale=likert_scale,
         )
+
+
+def test_self_factories_return_subclass(patch_central_database, tmp_path: Path, likert_scale: LikertScale) -> None:
+    """Self-typed factories return the subclass they are called on (PyRIT #4504)."""
+
+    class _SubScale(LikertScale):
+        pass
+
+    scale = _SubScale.from_yaml(_write_likert_yaml(tmp_path))
+    assert_type(scale, _SubScale)
+    assert isinstance(scale, _SubScale)
+
+    class _SubScorer(SelfAskLikertScorer):
+        pass
+
+    scorer = _SubScorer.from_likert_scale(chat_target=_mock_target(), likert_scale=likert_scale)
+    assert_type(scorer, _SubScorer)
+    assert isinstance(scorer, _SubScorer)

@@ -54,7 +54,7 @@ interface RowOptions {
   readonly scenarioResultId: string
   readonly hierarchy: UseScenarioResultHierarchyResult
   readonly onOpenDetails: AttackExecutionTableProps['onOpenDetails']
-  readonly techniqueNames?: ReadonlyMap<string, string>
+  readonly techniqueNames?: ReadonlyMap<string, string> | undefined
   readonly showTimestamp: boolean
   readonly showConversationLink: boolean
   readonly booleanOutcome: boolean

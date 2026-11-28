@@ -12,7 +12,7 @@ import time
 from copy import copy, deepcopy
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, Self, cast, runtime_checkable
 from uuid import uuid4
 
 import numpy as np
@@ -58,6 +58,32 @@ _DEFAULT_TEST_PREFIXES: list[str] = [
 ]
 
 
+@runtime_checkable
+class _SelectiveLossFunction(Protocol):
+    """A loss function that can score candidates from only the logit positions it needs."""
+
+    def get_required_logit_positions(
+        self,
+        *,
+        target_slice: slice,
+        control_slice: slice,
+        device: torch.device | str | None = None,
+    ) -> torch.Tensor:
+        """Return the sequence positions whose logits the loss reads."""
+        ...
+
+    def compute_loss_from_selected_logits(
+        self,
+        *,
+        logits: torch.Tensor,
+        token_ids: torch.Tensor,
+        target_slice: slice,
+        control_slice: slice,
+    ) -> torch.Tensor:
+        """Compute the per-candidate loss from logits at the required positions."""
+        ...
+
+
 class StopReason(str, Enum):
     """Why an optimization run stopped iterating."""
 
@@ -100,7 +126,7 @@ class RngBundle:
     derived_seeds: dict[int, int]
 
     @classmethod
-    def from_seed(cls, *, base_seed: int, workers: list[ModelWorker]) -> RngBundle:
+    def from_seed(cls, *, base_seed: int, workers: list[ModelWorker]) -> Self:
         """
         Create deterministic local RNGs for one GCG run.
 
@@ -267,7 +293,7 @@ def get_embedding_matrix(model: Any) -> Any:
     return model.get_input_embeddings().weight
 
 
-def get_embeddings(model: Any, input_ids: torch.Tensor) -> Any:
+def get_embeddings(model: Any, *, input_ids: torch.Tensor) -> Any:
     """
     Embed input token ids with a causal language model.
 
@@ -287,7 +313,7 @@ def get_embeddings(model: Any, input_ids: torch.Tensor) -> Any:
     return embeddings
 
 
-def get_nonascii_toks(tokenizer: Any, device: str = "cpu") -> torch.Tensor:
+def get_nonascii_toks(tokenizer: Any, *, device: str = "cpu") -> torch.Tensor:
     """Return tokenizer ids that are non-ASCII or represent special tokens."""
 
     def is_ascii(s: str) -> bool:
@@ -314,6 +340,7 @@ class AttackPrompt:
 
     def __init__(
         self,
+        *,
         goal: str,
         target: str,
         tokenizer: Any,
@@ -503,12 +530,15 @@ class AttackPrompt:
         self.input_ids = torch.tensor(toks[: target_slice.stop], device="cpu")
 
     @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
-    def generate(self, model: Any, gen_config: Any = None) -> torch.Tensor:
+    def generate(self, model: Any, *, gen_config: Any = None) -> torch.Tensor:
         """
         Generate a model continuation from the current attack prompt.
 
         Returns:
             torch.Tensor: Generated continuation token ids.
+
+        Raises:
+            TypeError: If the model does not return a tensor of token ids.
         """
         if gen_config is None:
             gen_config = model.generation_config
@@ -518,22 +548,24 @@ class AttackPrompt:
             logger.warning("max_new_tokens > 32 may cause testing to slow down.")
         input_ids = self.input_ids[: self._assistant_role_slice.stop].to(model.device).unsqueeze(0)
         attn_masks = torch.ones_like(input_ids).to(model.device)
-        output_ids: torch.Tensor = model.generate(
+        output_ids = model.generate(
             input_ids, attention_mask=attn_masks, generation_config=gen_config, pad_token_id=self.tokenizer.pad_token_id
         )[0]
+        if not isinstance(output_ids, torch.Tensor):
+            raise TypeError(f"Model generate must return token id tensors, got {type(output_ids).__name__}")
 
         return output_ids[self._assistant_role_slice.stop :]
 
-    def generate_str(self, model: Any, gen_config: Any = None) -> Any:
+    def generate_str(self, model: Any, *, gen_config: Any = None) -> str:
         """
         Generate and decode a model continuation.
 
         Returns:
-            Any: The decoded continuation.
+            str: The decoded continuation.
         """
-        return self.tokenizer.decode(self.generate(model, gen_config))
+        return self._decode(self.generate(model, gen_config=gen_config))
 
-    def test(self, model: Any, gen_config: Any = None) -> tuple[bool, int]:
+    def test(self, model: Any, *, gen_config: Any = None) -> tuple[bool, int]:
         """
         Test whether the current prompt jailbreaks and matches its target.
 
@@ -543,7 +575,7 @@ class AttackPrompt:
         if gen_config is None:
             gen_config = model.generation_config
             gen_config.max_new_tokens = self.test_new_toks
-        gen_str = self.generate_str(model, gen_config).strip()
+        gen_str = self.generate_str(model, gen_config=gen_config).strip()
         logger.info(gen_str)
         jailbroken = not any(prefix in gen_str for prefix in self.test_prefixes)
         em = self.target in gen_str
@@ -558,7 +590,7 @@ class AttackPrompt:
             float: Mean target loss.
         """
         logits, ids = self.logits(model, return_ids=True)
-        return self.target_loss(logits, ids).mean().item()  # type: ignore[no-any-return, unused-ignore]
+        return self.target_loss(logits, ids=ids).mean().item()  # type: ignore[no-any-return, unused-ignore]
 
     def grad(self, model: Any) -> torch.Tensor:
         """Compute gradients for the current attack prompt."""
@@ -568,6 +600,7 @@ class AttackPrompt:
     def _build_candidate_batch(
         self,
         model: Any,
+        *,
         test_controls: Any = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """
@@ -627,6 +660,7 @@ class AttackPrompt:
     def logits(
         self,
         model: Any,
+        *,
         test_controls: Any = None,
         return_ids: bool = False,
         logits_to_keep: torch.Tensor | None = None,
@@ -640,7 +674,7 @@ class AttackPrompt:
         Raises:
             ValueError: If candidate controls have an invalid type or shape.
         """
-        ids, attn_mask = self._build_candidate_batch(model, test_controls)
+        ids, attn_mask = self._build_candidate_batch(model, test_controls=test_controls)
 
         model_kwargs: dict[str, Any] = {"input_ids": ids, "attention_mask": attn_mask}
         if logits_to_keep is not None:
@@ -653,7 +687,7 @@ class AttackPrompt:
         return logits
 
     @staticmethod
-    def _expand_prefix_cache(prefix_cache: Any, batch_size: int) -> Any:
+    def _expand_prefix_cache(prefix_cache: Any, *, batch_size: int) -> Any:
         """
         Return an independently mutable, batch-expanded view of a model KV cache.
 
@@ -713,8 +747,9 @@ class AttackPrompt:
     def _loss_with_prefix_cache(
         self,
         model: Any,
+        *,
         test_controls: Any,
-        loss_function: Any,
+        loss_function: _SelectiveLossFunction,
         logit_positions: torch.Tensor,
     ) -> torch.Tensor | None:
         """
@@ -724,7 +759,7 @@ class AttackPrompt:
             torch.Tensor | None: One scalar loss per candidate control, or ``None``
                 when the model's cache cannot be safely batch-expanded.
         """
-        token_ids, attention_mask = self._build_candidate_batch(model, test_controls)
+        token_ids, attention_mask = self._build_candidate_batch(model, test_controls=test_controls)
         prefix_length = self._control_slice.start - 1
         prefix_kwargs: dict[str, Any] = {
             "input_ids": token_ids[:1, :prefix_length],
@@ -737,7 +772,7 @@ class AttackPrompt:
         prefix_output = model(**prefix_kwargs)
         try:
             prefix_cache = self._expand_prefix_cache(
-                getattr(prefix_output, "past_key_values", None), token_ids.shape[0]
+                getattr(prefix_output, "past_key_values", None), batch_size=token_ids.shape[0]
             )
         except (TypeError, ValueError):
             del prefix_output, token_ids
@@ -757,22 +792,21 @@ class AttackPrompt:
         del prefix_cache
 
         try:
-            result: torch.Tensor = loss_function.compute_loss_from_selected_logits(
+            return loss_function.compute_loss_from_selected_logits(
                 logits=logits,
                 token_ids=token_ids,
                 target_slice=self._target_slice,
                 control_slice=self._control_slice,
             )
-            return result
         finally:
             del logits, token_ids
 
     def loss(
         self,
         model: Any,
+        *,
         test_controls: Any,
         loss_function: LossFunction,
-        *,
         use_prefix_cache: bool = False,
     ) -> torch.Tensor:
         """
@@ -784,7 +818,6 @@ class AttackPrompt:
         Returns:
             torch.Tensor: One scalar loss per candidate control.
         """
-        selective_loss = cast("Any", loss_function)
         try:
             forward_parameters = inspect.signature(model.forward).parameters
         except (TypeError, ValueError):
@@ -793,8 +826,8 @@ class AttackPrompt:
         supports_selective_logits = "logits_to_keep" in forward_parameters
         supports_prefix_cache = "past_key_values" in forward_parameters and "use_cache" in forward_parameters
 
-        if supports_selective_logits and hasattr(selective_loss, "get_required_logit_positions"):
-            logit_positions = selective_loss.get_required_logit_positions(
+        if supports_selective_logits and isinstance(loss_function, _SelectiveLossFunction):
+            logit_positions = loss_function.get_required_logit_positions(
                 target_slice=self._target_slice,
                 control_slice=self._control_slice,
                 device=model.device,
@@ -802,30 +835,29 @@ class AttackPrompt:
             if use_prefix_cache and supports_prefix_cache and self._control_slice.start > 1:
                 cached_loss = self._loss_with_prefix_cache(
                     model,
-                    test_controls,
-                    selective_loss,
-                    logit_positions,
+                    test_controls=test_controls,
+                    loss_function=loss_function,
+                    logit_positions=logit_positions,
                 )
                 if cached_loss is not None:
                     return cached_loss
             logits, token_ids = self.logits(
                 model,
-                test_controls,
+                test_controls=test_controls,
                 return_ids=True,
                 logits_to_keep=logit_positions,
             )
             try:
-                result: torch.Tensor = selective_loss.compute_loss_from_selected_logits(
+                return loss_function.compute_loss_from_selected_logits(
                     logits=logits,
                     token_ids=token_ids,
                     target_slice=self._target_slice,
                     control_slice=self._control_slice,
                 )
-                return result
             finally:
                 del logits, token_ids
 
-        logits, token_ids = self.logits(model, test_controls, return_ids=True)
+        logits, token_ids = self.logits(model, test_controls=test_controls, return_ids=True)
         try:
             return loss_function.compute_loss(
                 logits=logits,
@@ -836,34 +868,49 @@ class AttackPrompt:
         finally:
             del logits, token_ids
 
-    def target_loss(self, logits: torch.Tensor, ids: torch.Tensor) -> torch.Tensor:
+    def target_loss(self, logits: torch.Tensor, *, ids: torch.Tensor) -> torch.Tensor:
         """
         Compute unreduced cross-entropy loss over target tokens.
 
         Returns:
             torch.Tensor: Per-token target losses.
         """
-        crit = nn.CrossEntropyLoss(reduction="none")
         loss_slice = slice(self._target_slice.start - 1, self._target_slice.stop - 1)
-        result: torch.Tensor = crit(logits[:, loss_slice, :].transpose(1, 2), ids[:, self._target_slice])
-        return result
+        return nn.functional.cross_entropy(
+            logits[:, loss_slice, :].transpose(1, 2), ids[:, self._target_slice], reduction="none"
+        )
 
-    def control_loss(self, logits: torch.Tensor, ids: torch.Tensor) -> torch.Tensor:
+    def control_loss(self, logits: torch.Tensor, *, ids: torch.Tensor) -> torch.Tensor:
         """
         Compute unreduced cross-entropy loss over control tokens.
 
         Returns:
             torch.Tensor: Per-token control losses.
         """
-        crit = nn.CrossEntropyLoss(reduction="none")
         loss_slice = slice(self._control_slice.start - 1, self._control_slice.stop - 1)
-        result: torch.Tensor = crit(logits[:, loss_slice, :].transpose(1, 2), ids[:, self._control_slice])
-        return result
+        return nn.functional.cross_entropy(
+            logits[:, loss_slice, :].transpose(1, 2), ids[:, self._control_slice], reduction="none"
+        )
+
+    def _decode(self, token_ids: torch.Tensor) -> str:
+        """
+        Decode token ids with the tokenizer of this prompt.
+
+        Returns:
+            str: The decoded text.
+
+        Raises:
+            TypeError: If the tokenizer does not return a string.
+        """
+        decoded = self.tokenizer.decode(token_ids)
+        if not isinstance(decoded, str):
+            raise TypeError(f"Tokenizer decode must return a string, got {type(decoded).__name__}")
+        return decoded
 
     @property
-    def assistant_str(self) -> Any:
+    def assistant_str(self) -> str:
         """The decoded assistant-role prefix."""
-        return self.tokenizer.decode(self.input_ids[self._assistant_role_slice]).strip()
+        return self._decode(self.input_ids[self._assistant_role_slice]).strip()
 
     @property
     def assistant_toks(self) -> torch.Tensor:
@@ -871,9 +918,9 @@ class AttackPrompt:
         return self.input_ids[self._assistant_role_slice]
 
     @property
-    def goal_str(self) -> Any:
+    def goal_str(self) -> str:
         """The decoded attack goal."""
-        return self.tokenizer.decode(self.input_ids[self._goal_slice]).strip()
+        return self._decode(self.input_ids[self._goal_slice]).strip()
 
     @goal_str.setter
     def goal_str(self, goal: str) -> None:
@@ -886,9 +933,9 @@ class AttackPrompt:
         return self.input_ids[self._goal_slice]
 
     @property
-    def target_str(self) -> Any:
+    def target_str(self) -> str:
         """The decoded target response prefix."""
-        return self.tokenizer.decode(self.input_ids[self._target_slice]).strip()
+        return self._decode(self.input_ids[self._target_slice]).strip()
 
     @target_str.setter
     def target_str(self, target: str) -> None:
@@ -901,9 +948,9 @@ class AttackPrompt:
         return self.input_ids[self._target_slice]
 
     @property
-    def control_str(self) -> Any:
+    def control_str(self) -> str:
         """The decoded adversarial control suffix."""
-        return self.tokenizer.decode(self.input_ids[self._control_slice]).strip()
+        return self._decode(self.input_ids[self._control_slice]).strip()
 
     @control_str.setter
     def control_str(self, control: str) -> None:
@@ -917,13 +964,13 @@ class AttackPrompt:
 
     @control_toks.setter
     def control_toks(self, input_control_toks: torch.Tensor) -> None:
-        self.control = self.tokenizer.decode(input_control_toks)
+        self.control = self._decode(input_control_toks)
         self._update_ids()
 
     @property
-    def prompt(self) -> Any:
+    def prompt(self) -> str:
         """The decoded goal and control prompt."""
-        return self.tokenizer.decode(self.input_ids[self._goal_slice.start : self._control_slice.stop])
+        return self._decode(self.input_ids[self._goal_slice.start : self._control_slice.stop])
 
     @property
     def input_toks(self) -> torch.Tensor:
@@ -931,14 +978,14 @@ class AttackPrompt:
         return self.input_ids
 
     @property
-    def input_str(self) -> Any:
+    def input_str(self) -> str:
         """The decoded model input."""
-        return self.tokenizer.decode(self.input_ids)
+        return self._decode(self.input_ids)
 
     @property
     def eval_str(self) -> str:
         """The decoded input used for evaluation."""
-        decoded: str = self.tokenizer.decode(self.input_ids[: self._assistant_role_slice.stop])
+        decoded = self._decode(self.input_ids[: self._assistant_role_slice.stop])
         return decoded.replace("<s>", "").replace("</s>", "")
 
 
@@ -947,6 +994,7 @@ class PromptManager:
 
     def __init__(
         self,
+        *,
         goals: list[str],
         targets: list[str],
         tokenizer: Any,
@@ -987,13 +1035,19 @@ class PromptManager:
         self.tokenizer = tokenizer
 
         self._prompts = [
-            managers["AP"](goal, target, tokenizer, control_init, test_prefixes)
+            managers["AP"](
+                goal=goal,
+                target=target,
+                tokenizer=tokenizer,
+                control_init=control_init,
+                test_prefixes=test_prefixes,
+            )
             for goal, target in zip(goals, targets, strict=True)
         ]
 
         self._nonascii_toks = get_nonascii_toks(tokenizer, device="cpu")
 
-    def generate(self, model: Any, gen_config: Any = None) -> list[torch.Tensor]:
+    def generate(self, model: Any, *, gen_config: Any = None) -> list[torch.Tensor]:
         """
         Generate continuations for all managed prompts.
 
@@ -1004,25 +1058,25 @@ class PromptManager:
             gen_config = model.generation_config
             gen_config.max_new_tokens = 16
 
-        return [prompt.generate(model, gen_config) for prompt in self._prompts]
+        return [prompt.generate(model, gen_config=gen_config) for prompt in self._prompts]
 
-    def generate_str(self, model: Any, gen_config: Any = None) -> list[str]:
+    def generate_str(self, model: Any, *, gen_config: Any = None) -> list[str]:
         """
         Generate decoded continuations for all managed prompts.
 
         Returns:
             list[str]: Decoded continuations.
         """
-        return [self.tokenizer.decode(output_toks) for output_toks in self.generate(model, gen_config)]
+        return [self.tokenizer.decode(output_toks) for output_toks in self.generate(model, gen_config=gen_config)]
 
-    def test(self, model: Any, gen_config: Any = None) -> list[tuple[bool, int]]:
+    def test(self, model: Any, *, gen_config: Any = None) -> list[tuple[bool, int]]:
         """
         Test all managed prompts for jailbreak and target matching.
 
         Returns:
             list[tuple[bool, int]]: Jailbreak and exact-match indicators.
         """
-        return [prompt.test(model, gen_config) for prompt in self._prompts]
+        return [prompt.test(model, gen_config=gen_config) for prompt in self._prompts]
 
     def test_loss(self, model: Any) -> list[float]:
         """
@@ -1049,19 +1103,19 @@ class PromptManager:
             gradient.add_(prompt.grad(model).to(dtype=gradient.dtype))
         return gradient.to(dtype=result_dtype)
 
-    def logits(self, model: Any, test_controls: Any = None, return_ids: bool = False) -> Any:
+    def logits(self, model: Any, *, test_controls: Any = None, return_ids: bool = False) -> Any:
         """
         Compute logits for all managed prompts.
 
         Returns:
             Any: Prompt logits, optionally paired with token ids.
         """
-        vals = [prompt.logits(model, test_controls, return_ids) for prompt in self._prompts]
+        vals = [prompt.logits(model, test_controls=test_controls, return_ids=return_ids) for prompt in self._prompts]
         if return_ids:
             return [val[0] for val in vals], [val[1] for val in vals]
         return vals
 
-    def target_loss(self, logits: list[torch.Tensor], ids: list[torch.Tensor]) -> torch.Tensor:
+    def target_loss(self, logits: list[torch.Tensor], *, ids: list[torch.Tensor]) -> torch.Tensor:
         """
         Compute the mean target loss across all managed prompts.
 
@@ -1070,13 +1124,13 @@ class PromptManager:
         """
         return torch.cat(
             [
-                prompt.target_loss(logit, token_ids).mean(dim=1).unsqueeze(1)
+                prompt.target_loss(logit, ids=token_ids).mean(dim=1).unsqueeze(1)
                 for prompt, logit, token_ids in zip(self._prompts, logits, ids, strict=True)
             ],
             dim=1,
         ).mean(dim=1)
 
-    def control_loss(self, logits: list[torch.Tensor], ids: list[torch.Tensor]) -> torch.Tensor:
+    def control_loss(self, logits: list[torch.Tensor], *, ids: list[torch.Tensor]) -> torch.Tensor:
         """
         Compute the mean control loss across all managed prompts.
 
@@ -1085,7 +1139,7 @@ class PromptManager:
         """
         return torch.cat(
             [
-                prompt.control_loss(logit, token_ids).mean(dim=1).unsqueeze(1)
+                prompt.control_loss(logit, ids=token_ids).mean(dim=1).unsqueeze(1)
                 for prompt, logit, token_ids in zip(self._prompts, logits, ids, strict=True)
             ],
             dim=1,
@@ -1125,8 +1179,7 @@ class PromptManager:
     @property
     def control_str(self) -> str:
         """The shared decoded control suffix."""
-        control: str = self._prompts[0].control_str
-        return control
+        return self._prompts[0].control_str
 
     @control_str.setter
     def control_str(self, control: str) -> None:
@@ -1146,8 +1199,12 @@ class MultiPromptAttack:
     #: and cleared at the start of each run so failed runs expose no stale data.
     last_run_state: OptimizationRunState | None = None
 
+    #: Seeded generators for the next `run` call, assigned by the caller; ``None`` leaves the run unseeded.
+    _rng_bundle: RngBundle | None = None
+
     def __init__(
         self,
+        *,
         goals: list[str],
         targets: list[str],
         workers: list[ModelWorker],
@@ -1206,8 +1263,19 @@ class MultiPromptAttack:
         self.test_prefixes = test_prefixes
         self.models = [worker.model for worker in workers]
         self.logfile = logfile
+        # The managers mapping is untyped; its "PM" entry is the PromptManager factory.
         self.prompts = [
-            managers["PM"](goals, targets, worker.tokenizer, control_init, test_prefixes, managers)
+            cast(
+                "PromptManager",
+                managers["PM"](
+                    goals=goals,
+                    targets=targets,
+                    tokenizer=worker.tokenizer,
+                    control_init=control_init,
+                    test_prefixes=test_prefixes,
+                    managers=managers,
+                ),
+            )
             for worker in workers
         ]
         self.managers = managers
@@ -1215,8 +1283,7 @@ class MultiPromptAttack:
     @property
     def control_str(self) -> str:
         """The shared decoded control suffix."""
-        control: str = self.prompts[0].control_str
-        return control
+        return self.prompts[0].control_str
 
     @control_str.setter
     def control_str(self, control: str) -> None:
@@ -1238,6 +1305,7 @@ class MultiPromptAttack:
     def get_filtered_cands(
         self,
         worker_index: int,
+        *,
         control_cand: torch.Tensor,
         filter_cand: bool = True,
         curr_control: str | None = None,
@@ -1287,7 +1355,7 @@ class MultiPromptAttack:
         Returns:
             bool: True when all jailbreak tests pass for every worker.
         """
-        model_tests_jb, _, _ = self.test(self.workers, self.prompts)
+        model_tests_jb, _, _ = self.test(workers=self.workers, prompts=self.prompts)
         return all(all(tests for tests in model_test) for model_test in model_tests_jb)
 
     def _log_best_checkpoint(
@@ -1319,13 +1387,20 @@ class MultiPromptAttack:
             self.control_str = state.best_control
             model_tests = self.test_all()
             self.log(
-                global_step, n_steps_total, self.control_str, state.best_loss, runtime, model_tests, verbose=verbose
+                step_num=global_step,
+                n_steps=n_steps_total,
+                control=self.control_str,
+                loss=state.best_loss,
+                runtime=runtime,
+                model_tests=model_tests,
+                verbose=verbose,
             )
         finally:
             self.control_str = last_control
 
     def run(
         self,
+        *,
         n_steps: int = 100,
         batch_size: int = 1024,
         topk: int = 256,
@@ -1355,7 +1430,7 @@ class MultiPromptAttack:
         py_rng = rng_bundle.py_rng
         self._torch_gens = rng_bundle.torch_gens
 
-        def acceptance_probability(e: float, e_prime: float, k: int) -> bool:
+        def acceptance_probability(*, e: float, e_prime: float, k: int) -> bool:
             temperature = max(1 - float(k + 1) / (n_steps + anneal_from), 1.0e-7)
             return e_prime < e or math.exp(-(e_prime - e) / temperature) >= py_rng.random()
 
@@ -1397,12 +1472,12 @@ class MultiPromptAttack:
         if self.logfile is not None and log_first:
             model_tests = self.test_all()
             self.log(
-                anneal_from,
-                n_steps + anneal_from,
-                self.control_str,
-                min(state.loss, 1e6),
-                state.runtime,
-                model_tests,
+                step_num=anneal_from,
+                n_steps=n_steps + anneal_from,
+                control=self.control_str,
+                loss=min(state.loss, 1e6),
+                runtime=state.runtime,
+                model_tests=model_tests,
                 verbose=verbose,
             )
 
@@ -1424,7 +1499,7 @@ class MultiPromptAttack:
                 verbose=verbose,
             )
             state.runtime = time.time() - start
-            keep_control = True if not anneal else acceptance_probability(state.loss, loss, i + anneal_from)
+            keep_control = True if not anneal else acceptance_probability(e=state.loss, e_prime=loss, k=i + anneal_from)
             if keep_control:
                 self.control_str = control
                 state.control = control
@@ -1456,20 +1531,22 @@ class MultiPromptAttack:
         return self.control_str, state.loss, state.steps_completed
 
     def test(
-        self, workers: list[ModelWorker], prompts: list[PromptManager], include_loss: bool = False
-    ) -> tuple[list[list[bool]], list[list[int]], list[list[float]]]:
+        self, *, workers: list[ModelWorker], prompts: list[PromptManager], include_loss: bool = False
+    ) -> tuple[list[list[int]], list[list[int]], list[list[float]]]:
         """
         Test prompts across workers and optionally collect their losses.
 
         Returns:
-            tuple[list[list[bool]], list[list[int]], list[list[float]]]:
-                Jailbreak, exact-match, and loss results.
+            tuple[list[list[int]], list[list[int]], list[list[float]]]:
+                Jailbreak (0 or 1), exact-match (0 or 1), and loss results.
         """
         for j, worker in enumerate(workers):
             worker(prompts[j], ModelWorkerOperation.TEST)
         model_tests = np.array([worker.results.get() for worker in workers])
-        model_tests_jb: list[list[bool]] = model_tests[..., 0].tolist()
-        model_tests_mb: list[list[int]] = model_tests[..., 1].tolist()
+        # NumPy stores each worker's (jailbroken, exact_match) pairs in one integer array,
+        # so both columns come back as 0 or 1.
+        model_tests_jb = [[int(jailbroken) for jailbroken in row] for row in model_tests[..., 0].tolist()]
+        model_tests_mb = [[int(exact_match) for exact_match in row] for row in model_tests[..., 1].tolist()]
         model_tests_loss: list[list[float]] = []
         if include_loss:
             for j, worker in enumerate(workers):
@@ -1478,27 +1555,27 @@ class MultiPromptAttack:
 
         return model_tests_jb, model_tests_mb, model_tests_loss
 
-    def test_all(self) -> tuple[list[list[bool]], list[list[int]], list[list[float]]]:
+    def test_all(self) -> tuple[list[list[int]], list[list[int]], list[list[float]]]:
         """
         Test training and held-out prompts across all workers.
 
         Returns:
-            tuple[list[list[bool]], list[list[int]], list[list[float]]]:
-                Jailbreak, exact-match, and loss results.
+            tuple[list[list[int]], list[list[int]], list[list[float]]]:
+                Jailbreak (0 or 1), exact-match (0 or 1), and loss results.
         """
         all_workers = self.workers + self.test_workers
         all_prompts = [
             self.managers["PM"](
-                self.goals + self.test_goals,
-                self.targets + self.test_targets,
-                worker.tokenizer,
-                self.control_str,
-                self.test_prefixes,
-                self.managers,
+                goals=self.goals + self.test_goals,
+                targets=self.targets + self.test_targets,
+                tokenizer=worker.tokenizer,
+                control_init=self.control_str,
+                test_prefixes=self.test_prefixes,
+                managers=self.managers,
             )
             for worker in all_workers
         ]
-        return self.test(all_workers, all_prompts, include_loss=True)
+        return self.test(workers=all_workers, prompts=all_prompts, include_loss=True)
 
     def parse_results(self, results: Any) -> tuple[Any, Any, Any, Any]:
         """
@@ -1517,12 +1594,13 @@ class MultiPromptAttack:
 
     def log(
         self,
+        *,
         step_num: int,
         n_steps: int,
         control: str,
         loss: float,
         runtime: float,
-        model_tests: tuple[list[list[bool]], list[list[int]], list[list[float]]],
+        model_tests: tuple[list[list[int]], list[list[int]], list[list[float]]],
         verbose: bool = True,
     ) -> None:
         """
@@ -1606,6 +1684,7 @@ class ProgressiveMultiPromptAttack:
 
     def __init__(
         self,
+        *,
         goals: list[str],
         targets: list[str],
         workers: list[ModelWorker],
@@ -1713,10 +1792,19 @@ class ProgressiveMultiPromptAttack:
             verbose (bool): Whether the closing log entry should print progress output.
         """
         model_tests = attack.test_all()
-        attack.log(step, n_steps, self.control, loss, 0.0, model_tests, verbose=verbose)
+        attack.log(
+            step_num=step,
+            n_steps=n_steps,
+            control=self.control,
+            loss=loss,
+            runtime=0.0,
+            model_tests=model_tests,
+            verbose=verbose,
+        )
 
     def run(
         self,
+        *,
         n_steps: int = 1000,
         batch_size: int = 1024,
         topk: int = 256,
@@ -1811,20 +1899,24 @@ class ProgressiveMultiPromptAttack:
         while not controller.is_complete:
             controller.before_inner_run()
             schedule = controller.state
-            attack = self.managers["MPA"](
-                self.goals[: controller.active_goal_count],
-                self.targets[: controller.active_goal_count],
-                self.workers[: controller.active_worker_count],
-                self.control,
-                self.test_prefixes,
-                self.logfile,
-                self.managers,
-                self.test_goals,
-                self.test_targets,
-                self.test_workers,
+            # The managers mapping is untyped; its "MPA" entry is the MultiPromptAttack factory.
+            attack = cast(
+                "MultiPromptAttack",
+                self.managers["MPA"](
+                    goals=self.goals[: controller.active_goal_count],
+                    targets=self.targets[: controller.active_goal_count],
+                    workers=self.workers[: controller.active_worker_count],
+                    control_init=self.control,
+                    test_prefixes=self.test_prefixes,
+                    logfile=self.logfile,
+                    managers=self.managers,
+                    test_goals=self.test_goals,
+                    test_targets=self.test_targets,
+                    test_workers=self.test_workers,
+                ),
             )
             attack._rng_bundle = rng_bundle
-            inner_result: tuple[str, float, int] = attack.run(
+            inner_result = attack.run(
                 n_steps=controller.remaining_steps,
                 batch_size=batch_size,
                 topk=topk,
@@ -1869,6 +1961,7 @@ class IndividualPromptAttack:
 
     def __init__(
         self,
+        *,
         goals: list[str],
         targets: list[str],
         workers: list[ModelWorker],
@@ -1953,6 +2046,7 @@ class IndividualPromptAttack:
 
     def run(
         self,
+        *,
         n_steps: int = 1000,
         batch_size: int = 1024,
         topk: int = 256,
@@ -2033,16 +2127,16 @@ class IndividualPromptAttack:
             logger.info(f"Goal {i + 1}/{len(self.goals)}")
 
             attack = self.managers["MPA"](
-                self.goals[i : i + 1],
-                self.targets[i : i + 1],
-                self.workers,
-                self.control,
-                self.test_prefixes,
-                self.logfile,
-                self.managers,
-                self.test_goals,
-                self.test_targets,
-                self.test_workers,
+                goals=self.goals[i : i + 1],
+                targets=self.targets[i : i + 1],
+                workers=self.workers,
+                control_init=self.control,
+                test_prefixes=self.test_prefixes,
+                logfile=self.logfile,
+                managers=self.managers,
+                test_goals=self.test_goals,
+                test_targets=self.test_targets,
+                test_workers=self.test_workers,
             )
             attack._rng_bundle = rng_bundle
             attack.run(
@@ -2072,6 +2166,7 @@ class EvaluateAttack:
 
     def __init__(
         self,
+        *,
         goals: list[str],
         targets: list[str],
         workers: list[ModelWorker],
@@ -2159,6 +2254,7 @@ class EvaluateAttack:
     @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
     def run(
         self,
+        *,
         steps: int,
         controls: list[str],
         batch_size: int,
@@ -2197,13 +2293,13 @@ class EvaluateAttack:
             ):
                 if control != prev_control and len(goals) > 0:
                     attack = self.managers["MPA"](
-                        goals,
-                        targets,
-                        self.workers,
-                        control,
-                        self.test_prefixes,
-                        self.logfile,
-                        self.managers,
+                        goals=goals,
+                        targets=targets,
+                        workers=self.workers,
+                        control_init=control,
+                        test_prefixes=self.test_prefixes,
+                        logfile=self.logfile,
+                        managers=self.managers,
                     )
                     all_inputs = [p.eval_str for p in attack.prompts[0]._prompts]
                     max_new_tokens = [p.test_new_toks for p in attack.prompts[0]._prompts]
@@ -2235,7 +2331,8 @@ class EvaluateAttack:
                         del batch_inputs, batch_input_ids, batch_attention_mask, outputs, batch_outputs
                         torch.cuda.empty_cache()
 
-                    curr_jb, curr_em = [], []
+                    curr_jb = []
+                    curr_em = []
                     for gen_str, target in zip(all_outputs, targets, strict=True):
                         jailbroken = not any(prefix in gen_str for prefix in self.test_prefixes)
                         em = target in gen_str
@@ -2296,6 +2393,7 @@ class ModelWorker:
 
     def __init__(
         self,
+        *,
         model_path: str,
         token: str | None,
         model_kwargs: dict[str, Any],
@@ -2319,6 +2417,7 @@ class ModelWorker:
 
     @staticmethod
     def run(
+        *,
         model: Any,
         tasks: mp.JoinableQueue[ModelWorkerTask | None],
         results: mp.JoinableQueue[Any],
@@ -2339,19 +2438,21 @@ class ModelWorker:
                     results.put(ModelWorker._execute_task(model=model, task=task))
             tasks.task_done()
 
-    def start(self) -> ModelWorker:
+    def start(self) -> Self:
         """
         Start the model worker process.
 
         Returns:
             ModelWorker: This worker.
         """
-        self.process = mp.Process(target=ModelWorker.run, args=(self.model, self.tasks, self.results))
+        self.process = mp.Process(
+            target=ModelWorker.run, kwargs={"model": self.model, "tasks": self.tasks, "results": self.results}
+        )
         self.process.start()
         logger.info(f"Started worker {self.process.pid} for model {self.model.name_or_path}")
         return self
 
-    def stop(self) -> ModelWorker:
+    def stop(self) -> Self:
         """
         Stop the model worker process and release cached CUDA memory.
 
@@ -2370,7 +2471,7 @@ class ModelWorker:
         operation: ModelWorkerOperation | Callable[..., Any],
         *args: Any,
         **kwargs: Any,
-    ) -> ModelWorker:
+    ) -> Self:
         """
         Queue an operation for execution by this worker.
 
@@ -2536,7 +2637,7 @@ def start_workers(*, params: Any, workers: list[ModelWorker]) -> None:
         worker.start()
 
 
-def get_workers(params: Any, evaluation: bool = False) -> tuple[list[ModelWorker], list[ModelWorker]]:
+def get_workers(params: Any, *, evaluation: bool = False) -> tuple[list[ModelWorker], list[ModelWorker]]:
     """
     Load and optionally start training and held-out model workers.
 
@@ -2590,11 +2691,11 @@ def get_workers(params: Any, evaluation: bool = False) -> tuple[list[ModelWorker
 
     workers = [
         ModelWorker(
-            params.model_paths[i],
-            params.token,
-            params.model_kwargs[i],
-            tokenizers[i],
-            params.devices[i],
+            model_path=params.model_paths[i],
+            token=params.token,
+            model_kwargs=params.model_kwargs[i],
+            tokenizer=tokenizers[i],
+            device=params.devices[i],
         )
         for i in range(len(params.model_paths))
     ]
@@ -2629,6 +2730,27 @@ def _read_string_column(*, data: Any, column: str, start: int = 0, end: int | No
     return values
 
 
+def _read_string_list(*, params: Any, name: str) -> list[str]:
+    """
+    Read an inline list of strings from the parameters, defaulting to an empty list.
+
+    Returns:
+        list[str]: A copy of the configured strings.
+
+    Raises:
+        ValueError: If the parameter is not a list or tuple of strings.
+    """
+    values = getattr(params, name, [])
+    if not isinstance(values, (list, tuple)):
+        raise ValueError(f"Parameter '{name}' must be a list of strings, got {type(values).__name__}")
+    result: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            raise ValueError(f"Parameter '{name}' must contain only strings, got {type(value).__name__}")
+        result.append(value)
+    return result
+
+
 def get_goals_and_targets(params: Any) -> tuple[list[str], list[str], list[str], list[str]]:
     """
     Load training and held-out goals and targets from parameters or CSV files.
@@ -2638,12 +2760,16 @@ def get_goals_and_targets(params: Any) -> tuple[list[str], list[str], list[str],
             training targets, held-out goals, and held-out targets.
 
     Raises:
-        ValueError: If a goal list and its corresponding target list differ in length.
+        ValueError: If a goal list and its corresponding target list differ in length,
+            or an inline goal or target list is not a list of strings.
     """
-    train_goals: list[str] = getattr(params, "goals", [])
-    train_targets: list[str] = getattr(params, "targets", [])
-    test_goals: list[str] = getattr(params, "test_goals", [])
-    test_targets: list[str] = getattr(params, "test_targets", [])
+    # Inline lists are only read where the CSV files below do not replace them.
+    train_from_csv = bool(params.train_data)
+    test_from_csv = train_from_csv and params.n_test_data > 0
+    train_goals = [] if train_from_csv else _read_string_list(params=params, name="goals")
+    train_targets = [] if train_from_csv else _read_string_list(params=params, name="targets")
+    test_goals = [] if test_from_csv else _read_string_list(params=params, name="test_goals")
+    test_targets = [] if test_from_csv else _read_string_list(params=params, name="test_targets")
 
     if params.train_data:
         train_data = pd.read_csv(params.train_data)

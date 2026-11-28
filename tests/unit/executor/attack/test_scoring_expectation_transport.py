@@ -704,7 +704,7 @@ class TestExecutionExpectationTransport:
                 try:
                     # ERROR persistence follows scorer draining, but is not part of the cleanup budget.
                     await wait_for_event_async(event=validation_started, tasks=[task])
-                    await wait_for_event_async(event=persistence_started, tasks=[task], timeout=5)
+                    await wait_for_event_async(event=persistence_started, tasks=[task])
                     assert validation_cancelled.is_set()
                     assert connection_closed.is_set()
                     assert not release_read.is_set()

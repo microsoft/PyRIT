@@ -136,7 +136,7 @@ export default function LaunchSuiteDialog({
     try {
       const execution = await scenarioSuitesApi.launch(suite.suite.name, request)
       rememberScanTargets(targets, request)
-      navigate(suiteExecutionRoutePath(execution.suite_execution_id))
+      void navigate(suiteExecutionRoutePath(execution.suite_execution_id))
     } catch (err: unknown) {
       const apiError = toApiError(err)
       if (apiError.status === 409) {
@@ -153,7 +153,7 @@ export default function LaunchSuiteDialog({
   return (
     <Dialog open onOpenChange={(_, data) => { if (!data.open) onDismiss() }}>
       <DialogSurface>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={(event) => { void handleSubmit(event) }}>
           <DialogBody>
             <DialogTitle>Launch {suite.suite.name}</DialogTitle>
             <DialogContent className={styles.body}>

@@ -110,7 +110,13 @@ class TestTokenGradientsIntegration:
         target_slice = slice(5, 7)
         loss_slice = slice(4, 6)
 
-        grad = token_gradients(gpt2_model, input_ids, control_slice, target_slice, loss_slice)
+        grad = token_gradients(
+            gpt2_model,
+            input_ids=input_ids,
+            input_slice=control_slice,
+            target_slice=target_slice,
+            loss_slice=loss_slice,
+        )
 
         n_control = control_slice.stop - control_slice.start
         assert grad.shape == (n_control, gpt2_tokenizer.vocab_size)
@@ -124,7 +130,13 @@ class TestTokenGradientsIntegration:
         target_slice = slice(6, 9)
         loss_slice = slice(5, 8)
 
-        grad = token_gradients(gpt2_model, input_ids, control_slice, target_slice, loss_slice)
+        grad = token_gradients(
+            gpt2_model,
+            input_ids=input_ids,
+            input_slice=control_slice,
+            target_slice=target_slice,
+            loss_slice=loss_slice,
+        )
 
         assert torch.isfinite(grad).all(), "Gradient contains non-finite values"
         assert (grad != 0).any(), "Gradient is all zeros"
@@ -239,7 +251,7 @@ class TestEmbeddingHelpersIntegration:
         self, gpt2_model: GPT2LMHeadModel, gpt2_tokenizer: transformers.PreTrainedTokenizer
     ) -> None:
         input_ids = gpt2_tokenizer("Hello world", return_tensors="pt")["input_ids"]
-        embeddings = get_embeddings(gpt2_model, input_ids)
+        embeddings = get_embeddings(gpt2_model, input_ids=input_ids)
         assert embeddings.shape[0] == 1
         assert embeddings.shape[1] == input_ids.shape[1]
 
