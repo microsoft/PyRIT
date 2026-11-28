@@ -14,7 +14,12 @@ from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt,
 
 from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.converter.converter import Converter, ConverterResult
-from pyrit.exceptions import get_retry_max_num_attempts
+from pyrit.exceptions import (
+    ConverterLLMResponseBlockedException,
+    EmptyResponseException,
+    PyritException,
+    get_retry_max_num_attempts,
+)
 from pyrit.exceptions.exception_classes import _DynamicStopAfterAttempt
 from pyrit.exceptions.exceptions_helpers import log_exception
 from pyrit.models import (
@@ -31,6 +36,41 @@ if TYPE_CHECKING:
     from tenacity.wait import wait_base
 
 logger = logging.getLogger(__name__)
+
+
+def _raise_if_converter_target_error(response: Message) -> None:
+    """
+    Raise when the converter target answered with an error response instead of rewritten text.
+
+    Targets report content filtering and other failures as response pieces (``response_error``
+    set, ``error`` data type) rather than raising, so the error payload must not be passed on
+    as the converted prompt.
+
+    Args:
+        response (Message): The converter target's response.
+
+    Raises:
+        ConverterLLMResponseBlockedException: If the converter target blocked the request.
+        EmptyResponseException: If the converter target returned an empty response.
+        PyritException: If the converter target returned any other error.
+    """
+    if not response.is_error():
+        return
+    error_piece = next(
+        (piece for piece in response.message_pieces if piece.has_error() or piece.converted_value_data_type == "error"),
+        response.message_pieces[0],
+    )
+    if error_piece.is_blocked():
+        raise ConverterLLMResponseBlockedException(
+            message=(
+                "The converter target blocked the conversion request (content filter). Consider using a "
+                f"converter target with content filtering disabled. Response: {error_piece.converted_value}"
+            )
+        )
+    if error_piece.response_error == "empty":
+        raise EmptyResponseException(message="The converter target returned an empty response.")
+    error_kind = error_piece.response_error if error_piece.response_error != "none" else "unknown"
+    raise PyritException(message=f"The converter target returned a {error_kind} error: {error_piece.converted_value}")
 
 
 def _describe_template_value(value: Any, *, parameter_name: str, enclosing: frozenset[int] = frozenset()) -> str:
@@ -304,12 +344,17 @@ class LLMGenericTextConverter(Converter):
             str: The post-processed response text from ``_process_response``.
 
         Raises:
+            ConverterLLMResponseBlockedException: If the converter target blocked the request.
+                It is retried only when included in the retry exceptions.
+            EmptyResponseException: If the converter target returned an empty response.
+            PyritException: If the converter target returned another error response.
             RuntimeError: Defensive guard for an unreachable code path; tenacity always
                 re-raises the underlying exception when retries are exhausted.
         """
         if not self._retry_exceptions:
             response = await self._converter_target.send_prompt_async(message=request)
-            return self._process_response(response[0].get_value())
+            _raise_if_converter_target_error(response[-1])
+            return self._process_response(response[-1].get_value())
 
         stop_strategy: stop_base = (
             stop_after_attempt(self._max_retry_attempts)
@@ -331,7 +376,8 @@ class LLMGenericTextConverter(Converter):
         ):
             with attempt:
                 response = await self._converter_target.send_prompt_async(message=request)
-                return self._process_response(response[0].get_value())
+                _raise_if_converter_target_error(response[-1])
+                return self._process_response(response[-1].get_value())
 
         raise RuntimeError("unreachable: tenacity reraises on exhaustion")  # pragma: no cover
 

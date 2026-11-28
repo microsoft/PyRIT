@@ -355,6 +355,9 @@ class PromptNormalizer:
         """
         Apply converter configurations to message pieces.
 
+        Error pieces (for example a content-filtered response) are left unchanged: they carry the
+        provider's error payload rather than content, so they are never passed to converters.
+
         Args:
             converter_configurations (list[ConverterConfiguration]): List of configurations specifying
                 which converters to apply and to which message pieces.
@@ -371,6 +374,8 @@ class PromptNormalizer:
                 if indexes and piece_index not in indexes:
                     continue
                 if data_types and piece.converted_value_data_type not in data_types:
+                    continue
+                if piece.has_error() or piece.converted_value_data_type == "error":
                     continue
 
                 piece.converter_identifiers.extend(

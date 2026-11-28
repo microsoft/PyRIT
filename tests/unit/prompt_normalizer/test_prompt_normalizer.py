@@ -810,6 +810,52 @@ async def test_convert_response_values_type(mock_memory_instance, response: Mess
     assert response.get_value(1) == "cGFydCAy"
 
 
+def _blocked_response() -> Message:
+    return Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value='{"status_code": 400, "message": "The response was filtered"}',
+                original_value_data_type="error",
+                converted_value_data_type="error",
+                response_error="blocked",
+            )
+        ]
+    )
+
+
+async def test_convert_values_skips_error_pieces_without_data_type_filter(mock_memory_instance):
+    blocked = _blocked_response()
+    original_value = blocked.get_value()
+    response_converter = ConverterConfiguration(converters=[ROT13Converter()])
+
+    await PromptNormalizer().convert_values_async(converter_configurations=[response_converter], message=blocked)
+
+    assert blocked.get_value() == original_value
+    assert blocked.message_pieces[0].converted_value_data_type == "error"
+    assert blocked.message_pieces[0].converter_identifiers == []
+
+
+async def test_send_prompt_async_response_converters_pass_blocked_response_through(mock_memory_instance, seed_group):
+    blocked = _blocked_response()
+    original_value = blocked.get_value()
+    prompt_target = MagicMock()
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+    prompt_target.send_prompt_async = AsyncMock(return_value=[blocked])
+
+    message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
+    result = await PromptNormalizer().send_prompt_async(
+        message=message,
+        response_converter_configurations=[ConverterConfiguration(converters=[ROT13Converter()])],
+        target=prompt_target,
+    )
+
+    assert result.get_value() == original_value
+    assert result.message_pieces[0].response_error == "blocked"
+    persisted = [call.kwargs["request"] for call in mock_memory_instance.add_message_to_memory_async.call_args_list]
+    assert any(saved is result for saved in persisted)
+
+
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("stage", ["request", "response"])
 async def test_converter_guard_covers_only_selected_conversions_async(
