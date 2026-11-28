@@ -40,7 +40,9 @@ class MCPStreamableHTTPServerConfig(BaseModel):
     @field_validator("url")
     @classmethod
     def _validate_url(cls, value: str) -> str:
-        if not value.startswith(("http://", "https://")):
+        # URL schemes are case-insensitive (RFC 3986 §3.1); configs written by
+        # other tools may use HTTPS:// or Https://.
+        if not value.lower().startswith(("http://", "https://")):
             raise ValueError("MCP Streamable HTTP server URL must start with http:// or https://")
         return value
 
