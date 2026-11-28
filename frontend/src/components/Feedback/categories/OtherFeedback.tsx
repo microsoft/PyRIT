@@ -22,7 +22,7 @@ export function OtherFeedback({
     <Field
       label="What would you like us to know?"
       required
-      validationMessage={primaryTooShort ? tooShortMessage : undefined}
+      validationMessage={primaryTooShort ? tooShortMessage : null}
       validationState={primaryTooShort ? 'warning' : 'none'}
     >
       <Textarea

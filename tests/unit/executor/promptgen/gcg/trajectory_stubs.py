@@ -139,10 +139,10 @@ class TrajectoryWorker:
         return self
 
     def __call__(self, ob: Any, operation: ModelWorkerOperation, *args: Any, **kwargs: Any) -> TrajectoryWorker:
-        self.results.put(self._execute(ob, operation, *args))
+        self.results.put(self._execute(ob, operation, *args, **kwargs))
         return self
 
-    def _execute(self, ob: Any, operation: ModelWorkerOperation, *args: Any) -> Any:
+    def _execute(self, ob: Any, operation: ModelWorkerOperation, *args: Any, **kwargs: Any) -> Any:
         if operation is ModelWorkerOperation.GRAD:
             if self.barrier is not None and self.worker_id == 0:
                 self.barrier.wait()
@@ -150,10 +150,10 @@ class TrajectoryWorker:
                     self.events.append(self.run_id)
             return self._grad(ob.control_toks)
         if operation is ModelWorkerOperation.LOGITS:
-            return self._logits(ob, args[0])
+            return self._logits(ob, kwargs["test_controls"])
         if operation is ModelWorkerOperation.LOSS:
-            logits, token_ids = self._logits(ob, args[0])
-            return args[1].compute_loss(
+            logits, token_ids = self._logits(ob, kwargs["test_controls"])
+            return kwargs["loss_function"].compute_loss(
                 logits=logits,
                 token_ids=token_ids,
                 target_slice=ob._target_slice,

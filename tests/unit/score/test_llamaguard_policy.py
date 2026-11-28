@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from pathlib import Path
+from typing import assert_type
 
 import pytest
 from pydantic import ValidationError
@@ -47,3 +48,15 @@ def test_policy_rejects_duplicate_codes() -> None:
 def test_category_rejects_invalid_codes(code: str) -> None:
     with pytest.raises(ValidationError):
         LlamaGuardCategory(code=code, name="Custom")
+
+
+def test_from_yaml_returns_subclass() -> None:
+    """Self-typed from_yaml returns the subclass it is called on (PyRIT #4504)."""
+
+    class _SubPolicy(LlamaGuardPolicy):
+        pass
+
+    policy = _SubPolicy.from_yaml(DEFAULT_POLICY_PATH)
+    assert_type(policy, _SubPolicy)
+    assert isinstance(policy, _SubPolicy)
+    assert policy.name == "Llama Guard 3 8B MLCommons policy"

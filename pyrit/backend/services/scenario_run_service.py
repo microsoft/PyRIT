@@ -94,6 +94,7 @@ from pyrit.models import (
     ScenarioRunListItem,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanGroupKind,
     ScenarioRunProgress,
     ScenarioRunState,
     ScenarioTechniqueSummary,
@@ -2128,7 +2129,7 @@ class ScenarioRunService:
         objective_achieved_rate = overall_counts.success_percentage or 0
         successful_attacks = overall_counts.succeeded
         techniques_used = (
-            list(dict.fromkeys(group.technique_name or group.display_group for group in plan.atomic_groups))
+            list(dict.fromkeys(group.technique_label for group in plan.atomic_groups))
             if plan is not None
             else scenario_result.get_techniques_used()
         )
@@ -2529,7 +2530,7 @@ class ScenarioRunService:
         if terminal and record.completed_at is not None:
             timestamps.append(record.completed_at)
         techniques = (
-            list(dict.fromkeys(group.technique_name or group.display_group for group in atomic_groups))
+            list(dict.fromkeys(group.technique_label for group in atomic_groups))
             if atomic_groups is not None
             else list(aggregate.atomic_attack_names)
         )
@@ -2847,7 +2848,8 @@ class ScenarioRunService:
         enriched_groups: list[ScenarioRunPlanAtomicGroup] = []
         for group in atomic_groups:
             technique_name = group.technique_name
-            if technique_name is None:
+            # A baseline runs no technique, even when its display group shares a technique's name.
+            if technique_name is None and group.kind != ScenarioRunPlanGroupKind.BASELINE:
                 technique_name = next(
                     (
                         candidate
@@ -3065,9 +3067,7 @@ class ScenarioRunService:
         scenario_identifier = header_result.scenario_identifier
         target, datasets_used, scenario_parameters = self._safe_run_metadata(scenario_identifier=scenario_identifier)
         if plan is not None:
-            techniques_used = list(
-                dict.fromkeys(group.technique_name or group.display_group for group in plan.atomic_groups)
-            )
+            techniques_used = list(dict.fromkeys(group.technique_label for group in plan.atomic_groups))
         else:
             techniques_used = self._identifier_techniques(scenario_identifier)
         scenario_identity = ScenarioProgressReadModel._build_component_identity(

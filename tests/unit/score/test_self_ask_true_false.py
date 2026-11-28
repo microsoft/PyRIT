@@ -4,6 +4,7 @@
 import json
 from pathlib import Path
 from textwrap import dedent
+from typing import assert_type
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -633,3 +634,35 @@ async def test_self_ask_true_false_scores_nontext_in_fresh_conversations_for_non
         assert [piece.converted_value_data_type for piece in message.message_pieces] == ["text", "image_path"]
         assert message.message_pieces[0].converted_value.startswith("objective: Describe this image\nresponse:")
         assert message.message_pieces[1].converted_value == str(image_path)
+
+
+def test_self_factories_return_subclass(patch_central_database) -> None:
+    """Self-typed factories return the subclass they are called on (PyRIT #4504).
+
+    Note: the real subclass SelfAskQuestionAnswerScorer is deliberately not covered
+    here: its __init__ takes true_false_question_path instead of the system_prompt /
+    question kwargs from_question passes, so from_question cannot construct it.
+    The test-local subclass below keeps the base __init__ signature.
+    """
+
+    class _SubQuestion(TrueFalseQuestion):
+        pass
+
+    question = _SubQuestion.from_yaml(TrueFalseQuestionPaths.GROUNDED.value)
+    assert_type(question, _SubQuestion)
+    assert isinstance(question, _SubQuestion)
+
+    class _SubScorer(SelfAskTrueFalseScorer):
+        pass
+
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    scorer = _SubScorer.from_question(chat_target=chat_target, question=question)
+    assert_type(scorer, _SubScorer)
+    assert isinstance(scorer, _SubScorer)
+
+    # MessageScorer.with_scorer_block_policy also preserves the subclass (copy path).
+    scoped = scorer.with_scorer_block_policy(raise_if_scorer_blocks=False)
+    assert_type(scoped, _SubScorer)
+    assert isinstance(scoped, _SubScorer)
+    assert scoped is not scorer

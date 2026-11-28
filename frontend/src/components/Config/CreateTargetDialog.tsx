@@ -55,6 +55,7 @@ import {
   isMetadataDrivenTargetParameter,
 } from './targetParameterPolicy'
 import { MAX_WEIGHT, parseWeight } from './weightValidation'
+import { fluentRef } from '@/utils/fluentRef'
 
 const FALLBACK_TARGET_TYPES = [
   'GitHubCopilotTarget',
@@ -328,7 +329,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const errorMessageRef = useRef<HTMLDivElement>(null)
   const httpRequestFieldRef = useRef<HTMLTextAreaElement>(null)
   const [fieldErrors, setFieldErrors] = useState<{
-    targetType?: string
+    targetType?: string | undefined
     endpoint?: string
     modelName?: string
     underlyingModel?: string
@@ -882,7 +883,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
             <form
               className={styles.form}
               data-testid="create-target-form"
-              onSubmit={(e) => { e.preventDefault(); handleSubmit() }}
+              onSubmit={(e) => { e.preventDefault(); void handleSubmit() }}
             >
               {error && !httpRequestError && (
                 <div ref={errorMessageRef} role="alert" tabIndex={-1}>
@@ -910,7 +911,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 label="Target Type"
                 hint="Each option shows what the target does, its implementation class, and how it authenticates."
                 required
-                validationMessage={fieldErrors.targetType}
+                validationMessage={fieldErrors.targetType || null}
                 validationState={fieldErrors.targetType ? 'error' : 'none'}
               >
                 <Dropdown
@@ -1006,13 +1007,13 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               <Field
                 className={styles.formField}
                 label="Registry Name"
-                hint={nameMessage ? undefined : 'Lowercase letters, digits and underscores, starting with a letter, up to 64 characters.'}
+                hint={nameMessage ? null : 'Lowercase letters, digits and underscores, starting with a letter, up to 64 characters.'}
                 required
-                validationMessage={nameMessage ?? undefined}
+                validationMessage={nameMessage ?? null}
                 validationState={nameMessage ? 'error' : 'none'}
               >
                 <Input
-                  ref={nameInputRef}
+                  ref={fluentRef(nameInputRef)}
                   value={nameValue}
                   onChange={(_, data) => {
                     setRegistryName(data.value)
@@ -1154,9 +1155,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasEndpointField && (
                     <Field
                       label="Endpoint URL"
-                      hint={endpointParameter?.description || undefined}
+                      hint={endpointParameter?.description || null}
                       required={endpointRequired}
-                      validationMessage={endpointMessage ?? undefined}
+                      validationMessage={endpointMessage ?? null}
                       validationState={endpointMessage ? 'error' : 'none'}
                     >
                       <Input
@@ -1176,9 +1177,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasModelNameField && (
                     <Field
                       label="Model / Deployment Name"
-                      hint={isGitHubCopilot ? GITHUB_COPILOT_MODEL_HINT : modelNameParameter?.description || undefined}
+                      hint={isGitHubCopilot ? GITHUB_COPILOT_MODEL_HINT : (modelNameParameter?.description || null)}
                       required={modelNameRequired}
-                      validationMessage={fieldErrors.modelName}
+                      validationMessage={fieldErrors.modelName || null}
                       validationState={fieldErrors.modelName ? 'error' : 'none'}
                     >
                       <Input
@@ -1217,9 +1218,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasUnderlyingModelField && (underlyingModelRequired || hasDifferentUnderlying) && (
                     <Field
                       label="Underlying Model"
-                      hint={underlyingModelParameter?.description || undefined}
+                      hint={underlyingModelParameter?.description || null}
                       required={underlyingModelRequired}
-                      validationMessage={fieldErrors.underlyingModel}
+                      validationMessage={fieldErrors.underlyingModel || null}
                       validationState={fieldErrors.underlyingModel ? 'error' : 'none'}
                     >
                       <Input
@@ -1299,9 +1300,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasApiKeyField && !isIdentity && !isNoKey && (
                     <Field
                       label="API Key"
-                      hint={apiKeyParameter?.description || undefined}
+                      hint={apiKeyParameter?.description || null}
                       required={apiKeyRequired}
-                      validationMessage={fieldErrors.apiKey}
+                      validationMessage={fieldErrors.apiKey || null}
                       validationState={fieldErrors.apiKey ? 'error' : 'none'}
                     >
                       <Input
@@ -1394,7 +1395,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
             </Button>
             <Button
               appearance="primary"
-              onClick={handleSubmit}
+              onClick={() => { void handleSubmit() }}
               disabled={
                 submitting ||
                 !targetType ||

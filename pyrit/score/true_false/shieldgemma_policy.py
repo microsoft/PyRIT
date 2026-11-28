@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -22,6 +22,7 @@ from pyrit.common.yaml_helper import safe_load_yaml
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import Self
 
 SHIELDGEMMA_DEFAULT_POLICY_PATH = (SCORER_SEED_PROMPT_PATH / "shieldgemma" / "shieldgemma_policy.yaml").resolve()
 
@@ -104,7 +105,7 @@ class ShieldGemmaPolicy(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_unique_guideline_names(self) -> ShieldGemmaPolicy:
+    def _validate_unique_guideline_names(self) -> Self:
         # Matched the same way get() matches, so a policy cannot validate with two names
         # that only differ in case and then leave the second one unreachable.
         names = [name.casefold() for name in self.guideline_names]
@@ -113,7 +114,7 @@ class ShieldGemmaPolicy(BaseModel):
         return self
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> ShieldGemmaPolicy:
+    def from_yaml(cls, path: str | Path) -> Self:
         """
         Load a ShieldGemma policy from YAML.
 
@@ -133,7 +134,7 @@ class ShieldGemmaPolicy(BaseModel):
         return cls.model_validate(loaded)
 
     @classmethod
-    def default(cls) -> ShieldGemmaPolicy:
+    def default(cls) -> Self:
         """
         Load the bundled ShieldGemma policy.
 

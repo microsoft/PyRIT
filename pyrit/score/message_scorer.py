@@ -10,7 +10,7 @@ import uuid
 from abc import abstractmethod
 from contextlib import nullcontext
 from dataclasses import replace
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar, Self, cast
 
 from pyrit.common import print_deprecation_message
 from pyrit.common.task_utils import gather_with_cleanup_async
@@ -380,7 +380,7 @@ class MessageScorer(Scorer):
         self._message_resolver = message_resolver or MessageScorableResolver()
         super().__init__(chat_target=chat_target)
 
-    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Self:
         """
         Return this scorer carrying the given blocked-response policy.
 

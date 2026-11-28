@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_completion_async
 
 from pyrit._code_execution import DockerRuntimeProfile, DockerSandboxClient
 from pyrit.models import (
@@ -289,10 +290,10 @@ async def test_cancelling_real_execution_cleans_up_async(docker_sandbox: DockerS
             pytest.fail(f"Execution ended before cancellation: {task.result()}")
 
         try:
-            await asyncio.wait_for(wait_until_running_async(), timeout=15)
+            await asyncio.wait_for(wait_until_running_async(), timeout=TEST_WATCHDOG_SECONDS)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(task, timeout=15)
+                await wait_for_completion_async(future=task)
         finally:
             if not task.done():
                 task.cancel()
