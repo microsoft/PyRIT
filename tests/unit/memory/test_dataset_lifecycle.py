@@ -22,11 +22,20 @@ from pyrit.common import Singleton
 from pyrit.memory import CentralMemory, PromptMemoryEntry, SeedEntry, SQLiteMemory
 from pyrit.memory.dataset_lifecycle import DatasetNameConflictError, entry_references_dataset_assets
 from pyrit.memory.dataset_mutation import DatasetVersionConflictError, dataset_version, editable_seed
-from pyrit.memory.memory_models import DatasetLifecycleEntry
-from pyrit.models import MessagePiece, SeedPrompt, SeedRecord, SeedUnion
+from pyrit.memory.memory_models import DatasetLifecycleEntry, ScenarioPlanSeedGroupEntry
+from pyrit.models import (
+    AttackSeedGroup,
+    MessagePiece,
+    ScenarioRunState,
+    SeedObjective,
+    SeedPrompt,
+    SeedRecord,
+    SeedUnion,
+)
 from pyrit.setup import SQLITE, initialize_pyrit_async
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 from unit.async_utils import TEST_WATCHDOG_SECONDS
+from unit.mocks import get_mock_target_identifier, make_scenario_result
 
 if TYPE_CHECKING:
     from sqlalchemy.sql.dml import Insert, Update
@@ -704,3 +713,153 @@ async def test_text_message_writes_skip_the_lifecycle_lock_but_seeds_take_it(
         await session.flush()
         assert session.info.get("dataset_lifecycle_locked")
         await session.commit()
+
+
+async def _plan_media_run_async(memory: SQLiteMemory, *, path: Path, state: ScenarioRunState) -> str:
+    group = AttackSeedGroup(
+        seeds=[SeedObjective(value="objective"), SeedPrompt(value=str(path), data_type="binary_path")]
+    )
+    result = make_scenario_result(
+        objective_target_identifier=get_mock_target_identifier(), attack_results={}, scenario_run_state=state
+    )
+    await memory.add_planned_scenario_result_async(scenario_result=result, seed_groups_by_dataset={"owned": [group]})
+    return str(result.id)
+
+
+@pytest.mark.parametrize(("state", "kept"), [(ScenarioRunState.FAILED, True), (ScenarioRunState.COMPLETED, False)])
+async def test_dataset_delete_keeps_media_an_incomplete_run_planned(
+    memories: tuple[SQLiteMemory, SQLiteMemory], state: ScenarioRunState, kept: bool
+) -> None:
+    memory = memories[0]
+    path = await _create_media_dataset_async(memory)
+    await _plan_media_run_async(memory, path=path, state=state)
+
+    deletion_id = await memory.delete_dataset_async(dataset_name="owned")
+    result = await memory.cleanup_dataset_media_async(operation_id=deletion_id)
+
+    assert result["status"] == "completed"
+    assert path.exists() is kept
+
+
+async def test_run_cannot_plan_media_queued_for_deletion(memories: tuple[SQLiteMemory, SQLiteMemory]) -> None:
+    memory = memories[0]
+    path = await _create_media_dataset_async(memory)
+    await memory.delete_dataset_async(dataset_name="owned")
+
+    with pytest.raises(ValueError, match="reserved for dataset cleanup"):
+        await _plan_media_run_async(memory, path=path, state=ScenarioRunState.CREATED)
+
+
+async def test_reopened_run_with_deleted_planned_media_does_not_block_unrelated_bulk_writes(
+    memories: tuple[SQLiteMemory, SQLiteMemory],
+) -> None:
+    memory = memories[0]
+    path = await _create_media_dataset_async(memory)
+    run_id = await _plan_media_run_async(memory, path=path, state=ScenarioRunState.COMPLETED)
+    deletion_id = await memory.delete_dataset_async(dataset_name="owned")
+    await memory.cleanup_dataset_media_async(operation_id=deletion_id)
+    assert not path.exists()
+    await memory.update_scenario_run_state_async(scenario_result_id=run_id, scenario_run_state=ScenarioRunState.FAILED)
+    other = SeedPrompt(value="original", dataset_name="other", added_by="test")
+    await memory.add_seeds_to_memory_async(seeds=[other], added_by="test")
+
+    async with await memory.get_session_async() as session:
+        await session.execute(update(SeedEntry.__table__).where(SeedEntry.id == other.id).values(value="bulk"))
+        await session.commit()
+
+    async with await memory.get_session_async() as session:
+        assert await session.scalar(select(SeedEntry.value).where(SeedEntry.id == other.id)) == "bulk"
+
+
+async def test_bulk_planned_group_insert_cannot_reference_media_queued_for_deletion(
+    memories: tuple[SQLiteMemory, SQLiteMemory],
+) -> None:
+    memory = memories[0]
+    path = await _create_media_dataset_async(memory)
+    result = make_scenario_result(objective_target_identifier=get_mock_target_identifier(), attack_results={})
+    await memory.add_planned_scenario_result_async(scenario_result=result, seed_groups_by_dataset={})
+    await memory.delete_dataset_async(dataset_name="owned")
+    entry = ScenarioPlanSeedGroupEntry(
+        scenario_result_id=result.id,
+        dataset_name="owned",
+        position=0,
+        seed_group=AttackSeedGroup(
+            seeds=[SeedObjective(value="objective"), SeedPrompt(value=str(path), data_type="binary_path")]
+        ),
+    )
+    table = ScenarioPlanSeedGroupEntry.__table__
+
+    async with await memory.get_session_async() as session:
+        with pytest.raises(ValueError, match="reserved for dataset cleanup"):
+            await session.execute(
+                insert(table).values(**{column.name: getattr(entry, column.name) for column in table.columns})
+            )
+
+
+@pytest.mark.parametrize("planned_media", [True, False])
+async def test_planning_media_takes_the_lifecycle_lock_before_inserting_the_run(
+    memories: tuple[SQLiteMemory, SQLiteMemory], planned_media: bool
+) -> None:
+    # Cleanup takes this lock before reading runs, so writers must take it before inserting one.
+    memory = memories[0]
+    path = await _create_media_dataset_async(memory)
+    seeds = [SeedObjective(value="objective")]
+    if planned_media:
+        seeds.append(SeedPrompt(value=str(path), data_type="binary_path"))
+    result = make_scenario_result(objective_target_identifier=get_mock_target_identifier(), attack_results={})
+    async with await memory.get_session_async() as session:
+        engine = session.bind.sync_engine
+    statements: list[str] = []
+
+    def record(_connection: Any, _cursor: Any, statement: str, *_args: Any) -> None:
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        await memory.add_planned_scenario_result_async(
+            scenario_result=result, seed_groups_by_dataset={"owned": [AttackSeedGroup(seeds=seeds)]}
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    run_insert = next(i for i, sql in enumerate(statements) if sql.startswith('INSERT INTO "ScenarioResultEntries"'))
+    locks = [i for i, sql in enumerate(statements) if '"DatasetLifecycleLock"' in sql]
+    assert (locks[0] < run_insert) if planned_media else not locks
+
+
+@pytest.mark.parametrize("references_stale_media", [False, True])
+async def test_stale_planned_media_does_not_block_unrelated_bulk_plan_inserts(
+    memories: tuple[SQLiteMemory, SQLiteMemory], references_stale_media: bool
+) -> None:
+    memory = memories[0]
+    path = await _create_media_dataset_async(memory)
+    run_id = await _plan_media_run_async(memory, path=path, state=ScenarioRunState.COMPLETED)
+    deletion_id = await memory.delete_dataset_async(dataset_name="owned")
+    await memory.cleanup_dataset_media_async(operation_id=deletion_id)
+    await memory.update_scenario_run_state_async(scenario_result_id=run_id, scenario_run_state=ScenarioRunState.FAILED)
+    result = make_scenario_result(objective_target_identifier=get_mock_target_identifier(), attack_results={})
+    await memory.add_planned_scenario_result_async(scenario_result=result, seed_groups_by_dataset={})
+    seeds = [SeedObjective(value="objective")]
+    if references_stale_media:
+        seeds.append(SeedPrompt(value=str(path), data_type="binary_path"))
+    entry = ScenarioPlanSeedGroupEntry(
+        scenario_result_id=result.id,
+        dataset_name="text",
+        position=0,
+        seed_group=AttackSeedGroup(seeds=seeds),
+    )
+    table = ScenarioPlanSeedGroupEntry.__table__
+    statement = insert(table).values(**{column.name: getattr(entry, column.name) for column in table.columns})
+
+    async with await memory.get_session_async() as session:
+        if references_stale_media:
+            # The reopened run already names this media, so only a count check catches the new reference.
+            with pytest.raises(ValueError, match="reserved for dataset cleanup"):
+                await session.execute(statement)
+            return
+        await session.execute(statement)
+        await session.commit()
+
+    assert await memory.get_planned_seed_groups_async(scenario_result_id=str(result.id)) == {
+        "text": [entry.get_seed_group()]
+    }

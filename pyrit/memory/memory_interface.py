@@ -8431,8 +8431,13 @@ class MemoryInterface(abc.ABC):
                 (name, group) for name, groups in population.items() for group in groups
             )
         ]
+        from pyrit.memory.dataset_lifecycle import entry_references_dataset_assets, lock_dataset_lifecycle
+
         with closing(self._get_session()) as session:
             try:
+                if any(entry_references_dataset_assets(entry) for entry in plan_entries):
+                    # Cleanup holds this lock while it reads runs, so take it before inserting one.
+                    lock_dataset_lifecycle(session)
                 for scenario_result in scenario_results:
                     self._persist_scenario_identifier(
                         session=session,
