@@ -12,6 +12,7 @@ from pyrit.models import (
     AttackSeedGroup,
     AttackTechniqueSeedGroup,
     Condition,
+    DisclosesSecret,
     DivergesFromRepetition,
     MatchesObjective,
     ScoringExpectation,
@@ -47,6 +48,7 @@ def test_seed_expectation_round_trip_preserves_concrete_conditions() -> None:
     [
         ToolsCalled(tools=(ToolCallRequirement(name="read_file"),)),
         DivergesFromRepetition(text="repeat"),
+        DisclosesSecret(secret="2025550147", known_context=("Jane Doe",)),
     ],
 )
 def test_seed_expectation_round_trip_preserves_other_builtin_conditions(condition: Condition) -> None:

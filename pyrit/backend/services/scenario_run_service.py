@@ -21,7 +21,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import TypeAdapter, ValidationError
@@ -94,6 +94,7 @@ from pyrit.models import (
     ScenarioRunListItem,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanGroupKind,
     ScenarioRunProgress,
     ScenarioRunState,
     ScenarioTechniqueSummary,
@@ -121,6 +122,10 @@ from pyrit.registry.instance_registry import (
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import get_default_adversarial_target, override_default_adversarial_target
+from pyrit.setup.initializers import FindingsInitializer
+
+if TYPE_CHECKING:
+    from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
 
@@ -1697,11 +1702,15 @@ class ScenarioRunService:
         """
         Validate and execute initializers specified in the request.
 
+        Every initializer is built before any runs, so a request naming an unknown or finding-fields
+        initializer is rejected before anything changes.
+
         Args:
             request: The run request containing initializer names and args.
 
         Raises:
-            ValueError: If an initializer name is not found in the registry.
+            ValueError: If an initializer name is not found in the registry, or an initializer sets the
+                deployment's finding fields, which only setup from ``.pyrit_conf`` may do.
             SavedEntryLaunchConflictError: If an initializer would replace a saved entry.
         """
         if not request.initializers:
@@ -1717,16 +1726,18 @@ class ScenarioRunService:
         self, *, request: RunScenarioRequest, initializer_registry: InitializerRegistry
     ) -> None:
         """
-        Execute the request's initializers in order.
+        Build the request's initializers, then execute them in order.
 
         Args:
             request: The run request containing initializer names and args.
             initializer_registry: The registry that builds the initializers.
 
         Raises:
-            ValueError: If an initializer name is not found in the registry.
+            ValueError: If an initializer name is not found in the registry, or an initializer sets the
+                deployment's finding fields.
             SavedEntryLaunchConflictError: If an initializer would replace a saved entry.
         """
+        instances: list[tuple[str, PyRITInitializer]] = []
         for initializer_name in request.initializers or []:
             initializer_params = (request.initializer_args or {}).get(initializer_name)
             try:
@@ -1735,6 +1746,13 @@ class ScenarioRunService:
                 )
             except KeyError as e:
                 raise ValueError(f"Initializer not found: {e}") from None
+            if isinstance(instance, FindingsInitializer):
+                raise ValueError(
+                    f"Initializer '{initializer_name}' sets the deployment's finding fields, so it can run only "
+                    "from .pyrit_conf, not for one scenario run."
+                )
+            instances.append((initializer_name, instance))
+        for initializer_name, instance in instances:
             # The registries refuse to replace a saved entry or a user's private entry; the record also
             # catches a refusal that the script itself caught, which would leave that entry in its place.
             with record_saved_entry_refusals() as refusals, registration_origin(RegistryEntryOrigin.TEMPORARY):
@@ -2111,7 +2129,7 @@ class ScenarioRunService:
         objective_achieved_rate = overall_counts.success_percentage or 0
         successful_attacks = overall_counts.succeeded
         techniques_used = (
-            list(dict.fromkeys(group.technique_name or group.display_group for group in plan.atomic_groups))
+            list(dict.fromkeys(group.technique_label for group in plan.atomic_groups))
             if plan is not None
             else scenario_result.get_techniques_used()
         )
@@ -2512,7 +2530,7 @@ class ScenarioRunService:
         if terminal and record.completed_at is not None:
             timestamps.append(record.completed_at)
         techniques = (
-            list(dict.fromkeys(group.technique_name or group.display_group for group in atomic_groups))
+            list(dict.fromkeys(group.technique_label for group in atomic_groups))
             if atomic_groups is not None
             else list(aggregate.atomic_attack_names)
         )
@@ -2830,7 +2848,8 @@ class ScenarioRunService:
         enriched_groups: list[ScenarioRunPlanAtomicGroup] = []
         for group in atomic_groups:
             technique_name = group.technique_name
-            if technique_name is None:
+            # A baseline runs no technique, even when its display group shares a technique's name.
+            if technique_name is None and group.kind != ScenarioRunPlanGroupKind.BASELINE:
                 technique_name = next(
                     (
                         candidate
@@ -3048,9 +3067,7 @@ class ScenarioRunService:
         scenario_identifier = header_result.scenario_identifier
         target, datasets_used, scenario_parameters = self._safe_run_metadata(scenario_identifier=scenario_identifier)
         if plan is not None:
-            techniques_used = list(
-                dict.fromkeys(group.technique_name or group.display_group for group in plan.atomic_groups)
-            )
+            techniques_used = list(dict.fromkeys(group.technique_label for group in plan.atomic_groups))
         else:
             techniques_used = self._identifier_techniques(scenario_identifier)
         scenario_identity = ScenarioProgressReadModel._build_component_identity(

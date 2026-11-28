@@ -3,7 +3,7 @@
 
 import base64
 import binascii
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, assert_never
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
@@ -39,7 +39,7 @@ class Base64Converter(Converter):
         Args:
             encoding_func: The base64 encoding function to use. Defaults to "b64encode".
         """
-        self._encoding_func = encoding_func
+        self._encoding_func: Base64Converter.EncodingFunc = encoding_func
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -89,6 +89,8 @@ class Base64Converter(Converter):
         elif self._encoding_func == "b85encode":
             encoded_bytes = base64.b85encode(string_bytes)
         else:
+            if TYPE_CHECKING:
+                assert_never(self._encoding_func)
             raise ValueError("Unsupported encoding function")
 
         return ConverterResult(output_text=encoded_bytes.decode("utf-8"), output_type="text")

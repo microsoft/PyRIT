@@ -15,9 +15,9 @@ interface LaunchSeedResource {
 interface ScenarioLaunchSeed {
   readonly active: boolean
   readonly loading: boolean
-  readonly error?: string
-  readonly initialRequest?: RunScenarioRequest
-  readonly request?: RunScenarioRequest
+  readonly error?: string | undefined
+  readonly initialRequest?: RunScenarioRequest | undefined
+  readonly request?: RunScenarioRequest | undefined
   readonly updateAttribution: (update: Pick<RunScenarioRequest, 'labels' | 'operation_id'>) => void
   readonly retry: () => void
 }

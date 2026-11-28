@@ -48,6 +48,7 @@ import {
 } from './seedExampleQuery'
 import { singleSeedExampleChoice } from './seedExampleSelection'
 import { useSeedExampleBrowserState, type SeedExampleBrowserState } from './useSeedExampleBrowserState'
+import { fluentRef } from '@/utils/fluentRef'
 
 const NOT_LABELED_LABEL = 'Not labeled'
 const SEARCH_HELP = 'Search looks through stored text prompts and objectives. Simulated-conversation JSON is not included; choose that seed type to find those examples. ASCII letters ignore case.'
@@ -55,8 +56,8 @@ const SEARCH_HELP = 'Search looks through stored text prompts and objectives. Si
 interface SeedExampleBrowserProps {
   dataset: DatasetInfo
   onCatalogStale: () => void
-  activeAttackId?: string | null
-  activeConversationId?: string | null
+  activeAttackId?: string | null | undefined
+  activeConversationId?: string | null | undefined
 }
 
 function toOptions(values: readonly string[]): FilterOption[] {
@@ -335,7 +336,9 @@ export function SeedExampleBrowserView({
         content: {
           text: outcome.type === 'single_prompt' ? outcome.text : (outcome.composerDraft?.text ?? ''),
           attachments: outcome.type === 'single_prompt' ? outcome.attachments : (outcome.composerDraft?.attachments ?? []),
-          textMetadata: outcome.type === 'single_prompt' ? outcome.textMetadata : outcome.composerDraft?.textMetadata,
+          ...((outcome.type === 'single_prompt' ? outcome.textMetadata : outcome.composerDraft?.textMetadata) !== undefined
+            ? { textMetadata: outcome.type === 'single_prompt' ? outcome.textMetadata : outcome.composerDraft?.textMetadata }
+            : {}),
         },
         ...(outcome.type === 'conversation'
           ? {
@@ -357,15 +360,15 @@ export function SeedExampleBrowserView({
       }
 
       if (destination === 'new_attack') {
-        navigate('/attack/chat')
+        void navigate('/attack/chat')
       } else if (
         destination === 'current_conversation' &&
         effectiveAttackId &&
         effectiveConversationId
       ) {
-        navigate(attackConversationRoutePath(effectiveAttackId, effectiveConversationId))
+        void navigate(attackConversationRoutePath(effectiveAttackId, effectiveConversationId))
       } else if (destination === 'new_conversation' && effectiveAttackId && targetConversationId) {
-        navigate(attackConversationRoutePath(effectiveAttackId, targetConversationId))
+        void navigate(attackConversationRoutePath(effectiveAttackId, targetConversationId))
       }
     },
     [detailState.detail, draftHandoff, effectiveAttackId, effectiveConversationId, navigate, runtime.ready],
@@ -378,7 +381,7 @@ export function SeedExampleBrowserView({
         setPendingDirtyDestination(destination)
         return
       }
-      executeImport(destination, false)
+      void executeImport(destination, false)
     },
     [executeImport, isDestinationDirty],
   )
@@ -470,7 +473,7 @@ export function SeedExampleBrowserView({
             </MessageBarBody>
           </MessageBar>
           <Button
-            ref={listRetryRef}
+            ref={fluentRef(listRetryRef)}
             className={styles.touchTarget}
             appearance="primary"
             icon={<ArrowSyncRegular />}
@@ -493,7 +496,7 @@ export function SeedExampleBrowserView({
         <div>
           <p className={styles.message}>Choose one page link, or start again from the first page.</p>
           <Button
-            ref={cursorButtonRef}
+            ref={fluentRef(cursorButtonRef)}
             className={styles.touchTarget}
             appearance="primary"
             onClick={restartFromFirstPage}
@@ -602,7 +605,7 @@ export function SeedExampleBrowserView({
       {query.exampleId && detailState.error && (
         <div>
           <MessageBar intent="error"><MessageBarBody>{detailState.error.detail}</MessageBarBody></MessageBar>
-          <Button ref={detailRetryRef} className={styles.touchTarget} appearance="primary" onClick={detailState.retry}>
+          <Button ref={fluentRef(detailRetryRef)} className={styles.touchTarget} appearance="primary" onClick={detailState.retry}>
             Retry example
           </Button>
         </div>
@@ -641,7 +644,7 @@ export function SeedExampleBrowserView({
           const dest = pendingDirtyDestination
           setPendingDirtyDestination(null)
           if (dest) {
-            executeImport(dest, true)
+            void executeImport(dest, true)
           }
         }}
         onCancel={() => {

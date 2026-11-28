@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
+from unit.async_utils import settle_tasks_async, wait_for_completion_async
 
 from pyrit.auth import BrowserSessionCopilotAuthenticator, CopilotAuthenticator
 from pyrit.memory import MemoryInterface
@@ -641,16 +642,19 @@ class TestConnectAndSend:
         mock_websocket.recv = AsyncMock(side_effect=receive_message)
 
         with patch("websockets.connect", return_value=mock_websocket):
-            with pytest.raises(TimeoutError, match="Timed out waiting for Copilot response after 1 seconds"):
-                await asyncio.wait_for(
-                    target._connect_and_send_async(
-                        message_pieces=sample_text_pieces,
-                        session_id="session_123",
-                        copilot_conversation_id="conv_456",
-                        is_start_of_session=True,
-                    ),
-                    timeout=3,
+            task = asyncio.create_task(
+                target._connect_and_send_async(
+                    message_pieces=sample_text_pieces,
+                    session_id="session_123",
+                    copilot_conversation_id="conv_456",
+                    is_start_of_session=True,
                 )
+            )
+            try:
+                with pytest.raises(TimeoutError, match="Timed out waiting for Copilot response after 1 seconds"):
+                    await wait_for_completion_async(future=task)
+            finally:
+                await settle_tasks_async(task)
 
         assert receive_count > 2
         mock_websocket.__aexit__.assert_awaited_once()

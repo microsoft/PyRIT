@@ -82,7 +82,7 @@ from pyrit.scenario.scenarios.airt import RapidResponse
 from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_technique
 from pyrit.scenario.scenarios.foundry import RedTeamAgent
 from pyrit.score import SubStringScorer
-from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks, wait_for_completion_async
+from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks, wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget
 
 # Bound the whole test, including teardown, even if cancellation or the event loop stalls.
@@ -632,7 +632,7 @@ async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
         assert threading.get_ident() != backend_thread
         assert get_default_adversarial_target() is target
         reads += 1
-        if not release.wait(5):
+        if not release.wait(TEST_WATCHDOG_SECONDS):
             raise TimeoutError("Many-shot disk read was not released.")
         return original_load()
 
@@ -680,8 +680,8 @@ async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
                 )
             )
             try:
-                await asyncio.wait_for(entered.wait(), 5)
-                await asyncio.wait_for(heartbeat.wait(), 1)
+                await wait_for_event_async(event=entered, tasks=[launch])
+                await asyncio.wait_for(heartbeat.wait(), TEST_WATCHDOG_SECONDS)
                 assert not launch.done()
                 release.set()
                 response = await wait_for_completion_async(future=launch)
@@ -737,7 +737,7 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
         assert threading.get_ident() != backend_thread
         assert get_default_adversarial_target() is target
         reads += 1
-        if not release.wait(5):
+        if not release.wait(TEST_WATCHDOG_SECONDS):
             raise TimeoutError("Foundry disk read was not released.")
         return original_load(file)
 
@@ -800,8 +800,8 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
                 )
             )
             try:
-                await asyncio.wait_for(entered.wait(), 5)
-                await asyncio.wait_for(heartbeat.wait(), 1)
+                await wait_for_event_async(event=entered, tasks=[launch])
+                await asyncio.wait_for(heartbeat.wait(), TEST_WATCHDOG_SECONDS)
                 assert not launch.done()
                 release.set()
                 response = await wait_for_completion_async(future=launch)
@@ -1519,7 +1519,7 @@ async def test_overlapping_resume_requests_only_initialize_once_async(
 
     with patch.object(service, "_start_run_locked_async", side_effect=fail_launch_async) as start:
         first = asyncio.create_task(service.resume_run_async(scenario_result_id=str(stored.id)))
-        await asyncio.wait_for(entered.wait(), timeout=5)
+        await wait_for_event_async(event=entered, tasks=[first])
         with pytest.raises(ScenarioRunConflictError, match="already being resumed"):
             await service.resume_run_async(scenario_result_id=str(stored.id))
         with pytest.raises(ScenarioRunConflictError, match="already being resumed"):
@@ -1596,7 +1596,7 @@ async def test_resumed_run_uses_existing_fifo_scheduler_async(
         active = await service.start_run_async(
             request=RunScenarioRequest(scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, max_concurrency=1)
         )
-        await asyncio.wait_for(entered.wait(), timeout=5)
+        await asyncio.wait_for(entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
         resumed = await service.resume_run_async(scenario_result_id=run_id)
         assert resumed.status == ScenarioRunState.QUEUED
         assert resumed.queue_position == 1

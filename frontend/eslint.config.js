@@ -40,6 +40,23 @@ export default [
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
     },
   },
+  // Type-aware Promise and async safety rules for production source (Issue #3729 Stage 3).
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/**/*.test.*", "src/setupTests.ts"],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        project: "./tsconfig.json",
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-misused-promises": "error",
+      "@typescript-eslint/prefer-promise-reject-errors": "error",
+    },
+  },
   // Accessibility checks for production components. Exceptions are disabled
   // inline with a reason, so new findings fail lint.
   {

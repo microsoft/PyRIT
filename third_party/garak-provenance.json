@@ -27,6 +27,29 @@
       ]
     },
     {
+      "path": "pyrit/converter/dra_converter.py",
+      "revision": "f1c99df7883dcfbfe4118381305b74e7e469a6e3",
+      "sources": [
+        "garak/probes/dra.py"
+      ]
+    },
+    {
+      "path": "pyrit/datasets/converters/dra_converter.yaml",
+      "revision": "f1c99df7883dcfbfe4118381305b74e7e469a6e3",
+      "sources": [
+        "garak/data/dra/prompt_templates.txt"
+      ]
+    },
+    {
+      "path": "pyrit/datasets/converters/dra_converter_words.yaml",
+      "revision": "f1c99df7883dcfbfe4118381305b74e7e469a6e3",
+      "sources": [
+        "garak/data/dra/letter_map.json",
+        "garak/data/dra/moderation_cache.json",
+        "garak/probes/dra.py"
+      ]
+    },
+    {
       "path": "pyrit/datasets/converters/policy_puppetry_converter.yaml",
       "sources": [
         "garak/probes/doctor.py"

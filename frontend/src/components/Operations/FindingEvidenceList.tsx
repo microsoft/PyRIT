@@ -14,6 +14,7 @@ import type { AttackOutcome, BackendScore, FindingEvidence, FindingEvidenceListR
 import { attackConversationRoutePath } from '@/utils/routeParams'
 
 import { useFindingEvidenceListStyles } from './FindingEvidenceList.styles'
+import { fluentRef } from '@/utils/fluentRef'
 
 const PAGE_SIZE = 20
 
@@ -27,7 +28,7 @@ interface FindingEvidenceListProps {
 }
 
 /** The attack's outcome with the score behind it, the same result Chat shows for the attack. */
-function EvidenceResult({ outcome, score }: { outcome: AttackOutcome; score?: BackendScore | null }) {
+function EvidenceResult({ outcome, score }: { outcome: AttackOutcome; score?: BackendScore | null | undefined }) {
   const styles = useFindingEvidenceListStyles()
   return (
     <div className={styles.stack}>
@@ -108,7 +109,7 @@ export default function FindingEvidenceList({
   return (
     <div className={styles.root}>
       <div className={styles.header}>
-        <Button ref={triggerRef} className={styles.button} aria-expanded={expanded}
+        <Button ref={fluentRef(triggerRef)} className={styles.button} aria-expanded={expanded}
           icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
           onClick={() => { setExpanded(value => !value) }}>Evidence ({count})</Button>
         {actions && <div className={styles.headerActions}>{actions}</div>}

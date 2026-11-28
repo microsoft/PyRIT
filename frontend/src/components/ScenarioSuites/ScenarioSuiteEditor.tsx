@@ -288,7 +288,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
         await scenarioSuitesApi.update(loaded.suite.name, suite, loaded.version)
       }
       allowNavigation.current = true
-      navigate(SUITE_LIBRARY_ROUTE)
+      void navigate(SUITE_LIBRARY_ROUTE)
     } catch (err: unknown) {
       setSaveError(toApiError(err).detail)
       setSaving(false)
@@ -326,7 +326,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
               {status === 'not-found' ? `No suite named "${decodedName}".` : loadError}
             </MessageBarBody>
           </MessageBar>
-          <Button appearance="primary" onClick={() => navigate(SUITE_LIBRARY_ROUTE)}>
+          <Button appearance="primary" onClick={() => { void navigate(SUITE_LIBRARY_ROUTE) }}>
             Back to suites
           </Button>
         </div>
@@ -572,7 +572,7 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
             appearance="secondary"
             type="button"
             disabled={saving}
-            onClick={() => navigate(SUITE_LIBRARY_ROUTE)}
+            onClick={() => { void navigate(SUITE_LIBRARY_ROUTE) }}
           >
             {readOnly ? 'Back to suites' : 'Cancel'}
           </Button>

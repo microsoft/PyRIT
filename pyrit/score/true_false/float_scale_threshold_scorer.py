@@ -5,7 +5,7 @@ import copy
 import math
 import uuid
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Self, cast
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -111,7 +111,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         """
         return self._scorer.get_chat_target()
 
-    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Self:
         """
         Apply the policy to the wrapped float-scale scorer.
 
@@ -122,9 +122,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             Scorer: ``self`` when the wrapped scorer is unchanged, otherwise a copy wrapping
             the updated scorer.
         """
-        scoped_inner = cast(
-            "FloatScaleScorer", self._scorer.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks)
-        )
+        scoped_inner = self._scorer.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks)
         if scoped_inner is self._scorer:
             return self
         scoped = copy.copy(self)

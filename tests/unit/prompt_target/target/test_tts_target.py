@@ -33,6 +33,19 @@ def test_tts_initializes(tts_target: OpenAITTSTarget):
     assert tts_target
 
 
+def test_tts_initialization_warns_about_removal_and_converter_migration(patch_central_database) -> None:
+    with pytest.warns(
+        DeprecationWarning,
+        match=r"OpenAITTSTarget is deprecated and will be removed in 1\.5\.0.*AzureSpeechTextToAudioConverter",
+    ) as warnings:
+        target = OpenAITTSTarget(model_name="test", endpoint="https://test.com", api_key="test")
+
+    tts_warnings = [warning for warning in warnings if "OpenAITTSTarget is deprecated" in str(warning.message)]
+    assert len(tts_warnings) == 1
+    assert tts_warnings[0].filename == __file__
+    assert target
+
+
 def test_tts_initializes_calls_get_required_parameters(patch_central_database):
     with (
         patch("pyrit.common.default_values.get_required_value") as mock_get_required,

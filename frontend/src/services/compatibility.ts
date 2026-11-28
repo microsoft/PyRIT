@@ -32,8 +32,8 @@ export class CompatibilityStore {
     this.publish({
       status: 'blocked',
       reason,
-      expected: typeof expected === 'string' ? expected : undefined,
-      actual: typeof actual === 'string' ? actual : undefined,
+      ...(typeof expected === 'string' ? { expected } : {}),
+      ...(typeof actual === 'string' ? { actual } : {}),
     })
   }
 
