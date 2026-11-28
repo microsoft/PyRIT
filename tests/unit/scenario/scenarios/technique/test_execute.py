@@ -417,7 +417,7 @@ class TestExecute:
             if saved_resume:
                 with pytest.raises(ScenarioPartialFailureException):
                     await original.run_async()
-                completed = await original._get_completed_objective_hashes_by_attack_async()
+                completed, _ = await original._get_attack_progress_async()
                 assert not completed
                 resumed = _scenario(
                     scorer=scorer,

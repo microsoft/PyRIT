@@ -14,6 +14,7 @@ import logging
 import threading
 import uuid
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
 from enum import Enum
@@ -2522,62 +2523,87 @@ class Scenario(ABC):
             f"(ID: {self._scenario_result_id}, state: {stored_result.scenario_run_state})"
         )
 
-    async def _get_completed_objective_hashes_by_attack_async(self) -> dict[tuple[str, str | None], set[str]]:
+    async def _get_attack_progress_async(
+        self,
+    ) -> tuple[dict[tuple[str, str | None], set[str]], dict[tuple[str, str | None], float]]:
         """
-        Index completed objective hashes for every atomic attack in this scenario.
+        Read completed objectives and failed attacks from one result snapshot.
 
-        Read the persisted attack results once by ``attribution_parent_id`` —
-        which is stamped at write-time by the attack persistence path — so
-        results from an interrupted run are visible even though the
-        ``ScenarioResult.attack_results`` aggregate may not yet reflect them.
-        Identity is content-derived (``to_sha256(objective)``), so it stays
-        stable even if ``get_seed_groups()`` reorders or resamples between runs.
+        Completed objectives are content-addressed by ``to_sha256(objective)``
+        and keyed by ``(parent_collection, parent_eval_hash)`` so two atomic
+        attacks sharing a name but using different techniques never
+        cross-pollinate their progress on resume. Rows persisted before
+        ``parent_eval_hash`` existed match name-only as a backward-compatible
+        fallback.
 
-        Rows are matched on ``(parent_collection, parent_eval_hash)`` so that
-        two ``AtomicAttack`` instances sharing a name but using different
-        techniques (e.g. base64 vs hex encoders) never cross-pollinate their
-        completed-hash sets on resume. Rows persisted before
-        ``parent_eval_hash`` was introduced (or by callers that don't supply
-        one) match name-only as a backward-compatible fallback.
-
-        Child rows cannot complete their parent unit. ``ERROR`` rows and rows carrying
-        an ``AttackPreparationFailure`` also stay pending.
+        ``ERROR`` rows and rows carrying an ``AttackPreparationFailure`` are not
+        completed, but they mark the attack as failed. A failed attack's rank is
+        the timestamp of its latest still-pending failure: retries put the
+        earliest one first so a permanently failing attack cannot starve the
+        other failed attacks forever.
 
         Returns:
-            dict[tuple[str, str | None], set[str]]: Completed objective hashes keyed by
-                collection name and technique eval hash. A missing eval hash retains
-                the legacy name-only matching behavior.
+            tuple: Completed objective hashes and the latest still-pending
+                failure timestamp per attack key. A missing eval hash is
+                represented as ``None`` in both.
 
         Raises:
-            Exception: If persisted progress cannot be read. Treating a failed read as
-                empty progress would re-execute already-completed objectives.
+            Exception: If persisted progress cannot be read. Treating a failed
+                read as empty progress would re-execute already-completed
+                objectives.
         """
         if not self._scenario_result_id:
-            return {}
+            return {}, {}
 
         rows = await self._memory.get_attack_results_async(
             scenario_result_id=self._scenario_result_id, result_selection=AttackResultSelection.ALL_RESULTS
         )
         completed_by_attack: dict[tuple[str, str | None], set[str]] = {}
+        failure_rows: list[tuple[tuple[str, str | None], str | None, float]] = []
         for row in rows:
+            attribution = row.attribution_data
+            name: Any = None
+            eval_hash: Any = None
+            if isinstance(attribution, dict):
+                name = attribution.get("parent_collection")
+                eval_hash = attribution.get("parent_eval_hash")
+                is_failure = row.outcome == AttackOutcome.ERROR
+                is_failure = is_failure or AttackPreparationFailure.from_result(result=row) is not None
+                # A persisted child row from a compound attack (e.g. FIRST_SUCCESS) carries its
+                # parent's linkage but its own ERROR only reflects that one attempt, not the
+                # parent. Only a top-level row (no attempt_index) can demote the parent attack.
+                if (
+                    is_failure
+                    and isinstance(name, str)
+                    and (eval_hash is None or isinstance(eval_hash, str))
+                    and AttackResultMetadata.from_metadata(metadata=attribution).attempt_index is None
+                ):
+                    timestamp = row.timestamp.timestamp()
+                    objective_hash = to_sha256(row.objective) if row.objective else None
+                    failure_rows.append(((name, eval_hash), objective_hash, timestamp))
+
             # ERROR rows hit infrastructure problems, and preparation failures never reached the
             # objective target at all, so neither measured the objective and both stay pending.
             # Every other row did reach the target and recorded the best verdict available --
             # including UNDETERMINED when no scorer was configured or the scorer abstained. Those
             # are measured results of a deterministic configuration; retrying them would re-send
             # the objective on every resume without ever converging.
-            if row.outcome == AttackOutcome.ERROR or not row.attribution_data or not row.objective:
+            if row.outcome == AttackOutcome.ERROR or not attribution or not row.objective:
                 continue
-            if AttackResultMetadata.from_metadata(metadata=row.attribution_data).attempt_index is not None:
+            if AttackResultMetadata.from_metadata(metadata=attribution).attempt_index is not None:
                 continue
             if AttackPreparationFailure.from_result(result=row) is not None:
                 continue
-            name = row.attribution_data.get("parent_collection")
-            eval_hash = row.attribution_data.get("parent_eval_hash")
             if not isinstance(name, str) or (eval_hash is not None and not isinstance(eval_hash, str)):
                 continue
             completed_by_attack.setdefault((name, eval_hash), set()).add(to_sha256(row.objective))
-        return completed_by_attack
+
+        failed_attack_keys: dict[tuple[str, str | None], float] = {}
+        for attack_key, objective_hash, timestamp in failure_rows:
+            if objective_hash is not None and objective_hash in completed_by_attack.get(attack_key, set()):
+                continue
+            failed_attack_keys[attack_key] = max(failed_attack_keys.get(attack_key, 0.0), timestamp)
+        return completed_by_attack, failed_attack_keys
 
     async def _get_remaining_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
@@ -2599,7 +2625,7 @@ class Scenario(ABC):
 
         remaining_attacks: list[AtomicAttack] = []
         # Read and index one snapshot before changing any attack's remaining work.
-        completed_by_attack = await self._get_completed_objective_hashes_by_attack_async()
+        completed_by_attack, failed_attack_keys = await self._get_attack_progress_async()
 
         for atomic_attack in self._atomic_attacks:
             name = atomic_attack.atomic_attack_name
@@ -2624,6 +2650,26 @@ class Scenario(ABC):
 
             remaining_attacks.append(atomic_attack)
 
+        # A retry/resume otherwise re-queues the same partially failed attack first,
+        # hits the same failing objective, and stops admission before the attacks
+        # behind it ever start. Attacks with no pending failure come first; failed
+        # attacks follow by their latest pending failure, oldest first, so repeated
+        # failures rotate instead of starving each other. The sort is stable, so
+        # original order is kept within each group.
+        # A legacy failure row with no eval hash matches name-only. Only trust that fallback when
+        # the name is unique among all atomic attacks; with two attacks sharing a name but using
+        # different techniques, a legacy row for one must not demote both. Counting over all
+        # attacks also keeps the name ambiguous after one namesake completes.
+        attack_name_counts = Counter(attack.atomic_attack_name for attack in self._atomic_attacks)
+
+        def failure_rank(attack: AtomicAttack) -> tuple[bool, float]:
+            attack_key = (attack.atomic_attack_name, attack.technique_eval_hash)
+            timestamp = failed_attack_keys.get(attack_key)
+            if timestamp is None and attack_name_counts[attack.atomic_attack_name] == 1:
+                timestamp = failed_attack_keys.get((attack.atomic_attack_name, None))
+            return timestamp is not None, timestamp or 0.0
+
+        remaining_attacks.sort(key=failure_rank)
         return remaining_attacks
 
     async def _resolve_seed_groups_by_dataset_async(

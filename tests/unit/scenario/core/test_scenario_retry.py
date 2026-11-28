@@ -4,6 +4,7 @@
 """Tests for Scenario retry functionality."""
 
 import asyncio
+from datetime import UTC, datetime
 from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
@@ -934,7 +935,7 @@ class TestScenarioForeignKeyResumeRegression:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestGetCompletedObjectiveHashesByAttack:
-    """Direct tests for ``Scenario._get_completed_objective_hashes_by_attack``
+    """Direct tests for the completed-objective half of ``Scenario._get_attack_progress_async``
     — the filter that excludes already-completed objectives on resume.
 
     Covers the row-filtering branches: outcome=ERROR rows, rows without
@@ -955,12 +956,13 @@ class TestGetCompletedObjectiveHashesByAttack:
         row.objective = objective
         row.metadata = metadata if metadata is not None else {}
         row.outcome_reason = None
+        row.timestamp = datetime(2026, 11, 20, tzinfo=UTC)
         return row
 
     async def test_returns_empty_when_scenario_result_id_unset(self):
         scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
         scenario._scenario_result_id = None
-        result = await scenario._get_completed_objective_hashes_by_attack_async()
+        result, _ = await scenario._get_attack_progress_async()
         assert result == {}
 
     async def test_skips_error_rows(self):
@@ -979,7 +981,7 @@ class TestGetCompletedObjectiveHashesByAttack:
                 attribution_data={"parent_collection": "a", "parent_eval_hash": "hash-A"},
             ),
         ]
-        result = await scenario._get_completed_objective_hashes_by_attack_async()
+        result, _ = await scenario._get_attack_progress_async()
         assert result == {("a", "hash-A"): {to_sha256("ok")}}
 
     async def test_skips_rows_that_never_reached_the_objective_target(self):
@@ -1014,7 +1016,7 @@ class TestGetCompletedObjectiveHashesByAttack:
                 ).to_metadata(),
             ),
         ]
-        result = await scenario._get_completed_objective_hashes_by_attack_async()
+        result, _ = await scenario._get_attack_progress_async()
         assert result == {("a", "hash-A"): {to_sha256("measured-failure")}}
 
     @pytest.mark.parametrize(
@@ -1035,7 +1037,7 @@ class TestGetCompletedObjectiveHashesByAttack:
         )
         row.outcome_reason = reason
         scenario._memory.get_attack_results_async.return_value = [row]
-        result = await scenario._get_completed_objective_hashes_by_attack_async()
+        result, _ = await scenario._get_attack_progress_async()
         assert result == {("a", "hash-A"): {to_sha256("no-verdict")}}
 
     async def test_skips_rows_without_attribution_data(self):
@@ -1049,7 +1051,7 @@ class TestGetCompletedObjectiveHashesByAttack:
                 attribution_data={"parent_collection": "a", "parent_eval_hash": "hash-A"},
             ),
         ]
-        result = await scenario._get_completed_objective_hashes_by_attack_async()
+        result, _ = await scenario._get_attack_progress_async()
         assert result == {("a", "hash-A"): {to_sha256("new")}}
 
     async def test_indexes_same_name_techniques_separately(self):
@@ -1069,7 +1071,7 @@ class TestGetCompletedObjectiveHashesByAttack:
                 attribution_data={"parent_collection": "encoding", "parent_eval_hash": "hash-hex"},
             ),
         ]
-        result = await scenario._get_completed_objective_hashes_by_attack_async()
+        result, _ = await scenario._get_attack_progress_async()
         assert result == {
             ("encoding", "hash-base64"): {to_sha256("mine")},
             ("encoding", "hash-hex"): {to_sha256("theirs")},
@@ -1087,5 +1089,238 @@ class TestGetCompletedObjectiveHashesByAttack:
                 attribution_data={"parent_collection": "a"},  # no parent_eval_hash
             ),
         ]
-        result = await scenario._get_completed_objective_hashes_by_attack_async()
+        result, _ = await scenario._get_attack_progress_async()
         assert result == {("a", None): {to_sha256("old")}}
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestRemainingAttackOrdering:
+    """Resume ordering: unstarted attacks before attacks that already failed."""
+
+    async def test_unstarted_attacks_are_queued_before_failed_ones(self):
+        failed = create_mock_atomic_attack("failed", ["poison", "healthy"])
+        unstarted_a = create_mock_atomic_attack("unstarted-a", ["a"])
+        unstarted_b = create_mock_atomic_attack("unstarted-b", ["b"])
+
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = [failed, unstarted_a, unstarted_b]
+        scenario._memory = MagicMock(spec=MemoryInterface)
+
+        failed_row = MagicMock()
+        failed_row.outcome = AttackOutcome.ERROR
+        failed_row.attribution_data = {
+            "parent_collection": failed.atomic_attack_name,
+            "parent_eval_hash": failed.technique_eval_hash,
+        }
+        failed_row.objective = "poison"
+        failed_row.metadata = {}
+        failed_row.outcome_reason = None
+        failed_row.timestamp = datetime(2026, 11, 20, tzinfo=UTC)
+        scenario._memory.get_attack_results_async.return_value = [failed_row]
+
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+
+        assert [attack.atomic_attack_name for attack in remaining] == [
+            "unstarted-a",
+            "unstarted-b",
+            "failed",
+        ]
+
+    async def test_interrupted_attack_is_not_queued_behind_a_failed_one(self):
+        failed = create_mock_atomic_attack("failed", ["poison", "healthy"])
+        partial = create_mock_atomic_attack("partial", ["done", "pending"])
+        unstarted = create_mock_atomic_attack("unstarted", ["u"])
+
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = [failed, partial, unstarted]
+        scenario._memory = MagicMock(spec=MemoryInterface)
+
+        def row(attack, objective, outcome):
+            r = MagicMock()
+            r.outcome = outcome
+            r.attribution_data = {
+                "parent_collection": attack.atomic_attack_name,
+                "parent_eval_hash": attack.technique_eval_hash,
+            }
+            r.objective = objective
+            r.metadata = {}
+            r.outcome_reason = None
+            r.timestamp = datetime(2026, 11, 20, tzinfo=UTC)
+            return r
+
+        scenario._memory.get_attack_results_async.return_value = [
+            row(failed, "poison", AttackOutcome.ERROR),
+            row(partial, "done", AttackOutcome.SUCCESS),
+        ]
+
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+
+        # "partial" was only interrupted, so it keeps its place ahead of "failed".
+        assert [attack.atomic_attack_name for attack in remaining] == ["partial", "unstarted", "failed"]
+
+    @staticmethod
+    def _failure_row(*, name, eval_hash=None, attempt_index=None):
+        row = MagicMock()
+        row.outcome = AttackOutcome.ERROR
+        attribution = {"parent_collection": name}
+        if eval_hash is not None:
+            attribution["parent_eval_hash"] = eval_hash
+        if attempt_index is not None:
+            attribution["attempt_index"] = attempt_index
+        row.attribution_data = attribution
+        row.objective = "poison"
+        row.metadata = {}
+        row.outcome_reason = None
+        row.timestamp = datetime(2026, 11, 20, tzinfo=UTC)
+        return row
+
+    async def test_completed_namesake_does_not_demote_surviving_duplicate(self):
+        """A legacy name-only failure stays ambiguous when one same-name attack
+        has finished; it must not demote the surviving namesake that never failed."""
+        dup_a = create_mock_atomic_attack("dup", ["a1"])
+        dup_b = create_mock_atomic_attack("dup", ["b1"])
+        unstarted = create_mock_atomic_attack("unstarted", ["u1"])
+
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = [dup_a, dup_b, unstarted]
+        scenario._memory = MagicMock(spec=MemoryInterface)
+
+        completed = self._failure_row(name="dup", eval_hash=dup_a.technique_eval_hash)
+        completed.outcome = AttackOutcome.SUCCESS
+        completed.objective = "a1"
+        scenario._memory.get_attack_results_async.return_value = [
+            completed,
+            self._failure_row(name="dup"),  # legacy, no eval hash
+        ]
+
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+
+        assert remaining[0] is dup_b
+        assert [attack.atomic_attack_name for attack in remaining] == ["dup", "unstarted"]
+
+    async def test_compound_child_error_does_not_demote_parent(self):
+        """A persisted ERROR from a compound attack's child (FIRST_SUCCESS) carries its
+        parent's linkage plus an attempt_index. That child failure belongs to one attempt,
+        not the parent atomic attack, so it must not push the parent to the back of the queue."""
+        parent = create_mock_atomic_attack("parent", ["p1", "p2"])
+        clean = create_mock_atomic_attack("clean", ["c1"])
+
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = [parent, clean]
+        scenario._memory = MagicMock(spec=MemoryInterface)
+        scenario._memory.get_attack_results_async.return_value = [
+            self._failure_row(
+                name=parent.atomic_attack_name,
+                eval_hash=parent.technique_eval_hash,
+                attempt_index=1,
+            )
+        ]
+
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+        assert [attack.atomic_attack_name for attack in remaining] == ["parent", "clean"]
+
+        # Control: the same ERROR without attempt_index is a genuine top-level failure and
+        # still demotes the parent.
+        scenario._memory.get_attack_results_async.return_value = [
+            self._failure_row(name=parent.atomic_attack_name, eval_hash=parent.technique_eval_hash)
+        ]
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+        assert [attack.atomic_attack_name for attack in remaining] == ["clean", "parent"]
+
+    async def test_legacy_failure_does_not_demote_ambiguous_duplicate_names(self):
+        """Two attacks share a name but use different techniques. A legacy failure row with
+        no eval hash cannot be attributed to either, so the conservative choice is to demote
+        neither. A row carrying a matching eval hash still demotes only that one attack."""
+        dup_a = create_mock_atomic_attack("dup", ["a1"])
+        unstarted = create_mock_atomic_attack("unstarted", ["u1"])
+        dup_b = create_mock_atomic_attack("dup", ["b1"])
+        assert dup_a.technique_eval_hash != dup_b.technique_eval_hash
+
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = [dup_a, unstarted, dup_b]
+        scenario._memory = MagicMock(spec=MemoryInterface)
+
+        # Legacy name-only failure: ambiguous name, so neither duplicate is demoted.
+        scenario._memory.get_attack_results_async.return_value = [self._failure_row(name="dup")]
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+        assert remaining == [dup_a, unstarted, dup_b]
+
+        # Control: a failure keyed by the exact eval hash demotes only dup_a; the primary
+        # (name, eval_hash) check must keep working.
+        scenario._memory.get_attack_results_async.return_value = [
+            self._failure_row(name="dup", eval_hash=dup_a.technique_eval_hash)
+        ]
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+        assert remaining == [unstarted, dup_b, dup_a]
+
+    async def test_unique_name_legacy_failure_is_used_for_ordering(self):
+        """A legacy failure row without ``parent_eval_hash`` demotes an attack
+        when its name identifies exactly one atomic attack."""
+        legacy = create_mock_atomic_attack("legacy", ["l"])
+        unstarted = create_mock_atomic_attack("unstarted", ["u"])
+
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = [legacy, unstarted]
+        scenario._memory = MagicMock(spec=MemoryInterface)
+
+        failure = self._failure_row(name="legacy")
+        failure.timestamp = datetime(2026, 11, 20, tzinfo=UTC)
+        scenario._memory.get_attack_results_async.return_value = [failure]
+
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+        assert [attack.atomic_attack_name for attack in remaining] == ["unstarted", "legacy"]
+
+    async def test_preparation_failure_row_demotes_attack(self):
+        """A row blocked before it reached the target still marks its attack as failed."""
+        blocked = create_mock_atomic_attack("blocked", ["b"])
+        unstarted = create_mock_atomic_attack("unstarted", ["u"])
+
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = [blocked, unstarted]
+        scenario._memory = MagicMock(spec=MemoryInterface)
+
+        failure = self._failure_row(name=blocked.atomic_attack_name, eval_hash=blocked.technique_eval_hash)
+        failure.outcome = AttackOutcome.UNDETERMINED
+        failure.metadata = AttackPreparationFailure(
+            kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
+            reason="blocked before any prompt was sent",
+        ).to_metadata()
+        failure.timestamp = datetime(2026, 11, 20, tzinfo=UTC)
+        scenario._memory.get_attack_results_async.return_value = [failure]
+
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+        assert [attack.atomic_attack_name for attack in remaining] == ["unstarted", "blocked"]
+
+    async def test_failed_attacks_rotate_by_latest_pending_failure(self):
+        """Two always-failing attacks alternate across retries: the one whose
+        latest pending failure is older goes first, so neither can starve the other."""
+        first = create_mock_atomic_attack("first", ["f1", "f2"])
+        second = create_mock_atomic_attack("second", ["s1", "s2"])
+
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = [first, second]
+        scenario._memory = MagicMock(spec=MemoryInterface)
+
+        first_failure = self._failure_row(name="first", eval_hash=first.technique_eval_hash)
+        first_failure.objective = "f1"
+        first_failure.timestamp = datetime(2026, 11, 20, 10, 0, tzinfo=UTC)
+        second_failure = self._failure_row(name="second", eval_hash=second.technique_eval_hash)
+        second_failure.objective = "s1"
+        second_failure.timestamp = datetime(2026, 11, 20, 11, 0, tzinfo=UTC)
+        scenario._memory.get_attack_results_async.return_value = [first_failure, second_failure]
+
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+        assert [attack.atomic_attack_name for attack in remaining] == ["first", "second"]
+
+        # The next retry fails "first" again; its later failure now puts it behind "second".
+        first_failure.timestamp = datetime(2026, 11, 20, 12, 0, tzinfo=UTC)
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+        assert [attack.atomic_attack_name for attack in remaining] == ["second", "first"]
