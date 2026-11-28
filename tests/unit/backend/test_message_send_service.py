@@ -1893,12 +1893,12 @@ class TestConcurrentMessages:
             )
             tasks = [active]
             try:
-                await asyncio.wait_for(waiting.wait(), timeout=30)
+                await wait_for_event_async(event=waiting, tasks=tasks)
                 independent = asyncio.create_task(
                     service.add_message_async(attack_result_id=other_attack.attack_result_id, request=other_request)
                 )
                 tasks.append(independent)
-                await asyncio.wait_for(metadata_started.wait(), timeout=30)
+                await wait_for_event_async(event=metadata_started, tasks=tasks)
                 assert delays == [2.0, 1.0]
                 assert target.prompt_sent == []
                 assert other_target.prompt_sent == ["Hello"]
@@ -4049,7 +4049,7 @@ class TestRepeatedMessageSend:
                         request=_submission(conversation_id=attack.conversation_id, submission_id="too-early"),
                     )
                 release_metadata.set()
-                async with asyncio.timeout(5):
+                async with asyncio.timeout(TEST_WATCHDOG_SECONDS):
                     while during.conversations[0].state != MessageSendState.COMPLETED:
                         during = await service.get_status_async(
                             attack_result_id=attack.attack_result_id, send_id=status.send_id, wait_ms=1

@@ -438,7 +438,7 @@ def process_items(self, *, items: list[str]) -> list[str]:
 
 ## Deprecations
 
-When deprecating a public class, function, method, parameter, or module path, use `pyrit.common.deprecation.print_deprecation_message` — **never** `warnings.warn` directly. It wraps `warnings.warn(..., DeprecationWarning, stacklevel=3)` with a consistent format so filtering still works.
+When deprecating a public class, function, method, parameter, or module path, use `pyrit.common.deprecation.print_deprecation_message` — **never** `warnings.warn` directly. It emits a consistently formatted `DeprecationWarning` attributed to the caller of the deprecated API, preserving ordinary `stacklevel=3` behavior while skipping constructor capture frames so filtering still works.
 
 Set `removed_in` to **current version + 2 minor versions** (e.g. `0.14.x` → `removed_in="0.16.0"`). This gives one full release cycle of warning before removal.
 

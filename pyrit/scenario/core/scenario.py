@@ -713,10 +713,7 @@ class Scenario(ABC):
             TrueFalseScorer: ``scorer`` unchanged when it already matches the policy or
             cannot express it, otherwise an independent scorer carrying the policy.
         """
-        return cast(
-            "TrueFalseScorer",
-            scorer.with_scorer_block_policy(raise_if_scorer_blocks=self.RAISE_IF_DEFAULT_SCORER_BLOCKS),
-        )
+        return scorer.with_scorer_block_policy(raise_if_scorer_blocks=self.RAISE_IF_DEFAULT_SCORER_BLOCKS)
 
     def set_params_from_args(self, *, args: dict[str, Any]) -> None:
         """
@@ -2191,7 +2188,9 @@ class Scenario(ABC):
         atomic_groups: list[ScenarioRunPlanAtomicGroup] = []
         for atomic_attack in self._atomic_attacks:
             technique_name = atomic_attack.technique_name
-            if not isinstance(technique_name, str):
+            baseline = atomic_attack.group_kind is ScenarioRunPlanGroupKind.BASELINE
+            # A baseline runs no technique, even when its display group shares a technique's name.
+            if not isinstance(technique_name, str) and not baseline:
                 technique_name = atomic_attack.display_group
             technique = next(
                 (candidate for candidate in self._technique_class if candidate.value == technique_name),

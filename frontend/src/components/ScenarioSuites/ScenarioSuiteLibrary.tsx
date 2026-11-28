@@ -34,6 +34,7 @@ import type { ScenarioSuiteResponse } from '@/types'
 
 import { useScenarioSuiteLibraryStyles } from './ScenarioSuiteLibrary.styles'
 import { NEW_SUITE_ROUTE, suiteEditorRoutePath } from './suiteRoutes'
+import { fluentRef } from '@/utils/fluentRef'
 
 const DEFINED_IN_CODE_HINT = 'Defined in code, so it cannot be edited or deleted here.'
 
@@ -162,11 +163,11 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
         </div>
         <div className={styles.headerActions}>
           <Button
-            ref={newSuiteButton}
+            ref={fluentRef(newSuiteButton)}
             className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
-            onClick={() => navigate(NEW_SUITE_ROUTE)}
+            onClick={() => { void navigate(NEW_SUITE_ROUTE) }}
             data-testid="new-suite-btn"
           >
             New suite
@@ -282,7 +283,7 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
                           className={styles.touchTarget}
                           appearance="subtle"
                           icon={<EditRegular />}
-                          onClick={() => navigate(suiteEditorRoutePath(item.suite.name))}
+                          onClick={() => { void navigate(suiteEditorRoutePath(item.suite.name)) }}
                           data-testid={`edit-suite-${item.suite.name}`}
                         >
                           {editable ? 'Edit' : 'View'}

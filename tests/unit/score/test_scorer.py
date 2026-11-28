@@ -6,6 +6,7 @@ import logging
 import uuid
 from dataclasses import replace
 from textwrap import dedent
+from typing import assert_type
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -37,6 +38,7 @@ from pyrit.score import (
     FloatScaleThresholdScorer,
     JsonSchemaResponseHandler,
     LegacyScorerHookError,
+    ManualScorer,
     MessageFloatScaleScorer,
     MessageScorable,
     MessageScorableResolver,
@@ -3657,3 +3659,18 @@ class TestScoreResponseAsyncBlockedContent:
 
         assert len(result["objective_scores"]) == 1
         assert leaf_scorer.scored_pieces[0].converted_value == "harmful text"
+
+
+def test_base_with_scorer_block_policy_returns_subclass(patch_central_database) -> None:
+    """Base Scorer.with_scorer_block_policy preserves the subclass (PyRIT #4504).
+
+    ManualScorer does not override the method, so this exercises Scorer itself.
+    """
+
+    class _SubScorer(ManualScorer):
+        pass
+
+    scorer = _SubScorer(value=True, rationale="manual", user_identifier="tester")
+    scoped = scorer.with_scorer_block_policy(raise_if_scorer_blocks=False)
+    assert_type(scoped, _SubScorer)
+    assert scoped is scorer
