@@ -93,7 +93,7 @@ class TestStandardGCGSampling:
         return prompt_manager
 
     def test_sample_candidates_matches_legacy_with_ascii_only(self) -> None:
-        """Legacy reference: ``GCGPromptManager.sample_control(grad, batch_size,
+        """Legacy reference: ``GCGPromptManager.sample_control(grad, batch_size=batch_size,
         topk=top_k, temp=1.0, allow_non_ascii=False)`` in
         ``pyrit/executor/promptgen/gcg/attack/gcg/gcg_attack.py``.
         """
@@ -114,7 +114,7 @@ class TestStandardGCGSampling:
         torch.manual_seed(12345)
         legacy_out = prompt_manager.sample_control(
             gradient_template.clone(),
-            batch_size,
+            batch_size=batch_size,
             topk=top_k,
             temp=1.0,
             allow_non_ascii=False,
@@ -155,7 +155,7 @@ class TestStandardGCGSampling:
         torch.manual_seed(54321)
         legacy_out = prompt_manager.sample_control(
             gradient_template.clone(),
-            batch_size,
+            batch_size=batch_size,
             topk=top_k,
             temp=1.0,
             allow_non_ascii=True,
@@ -197,8 +197,8 @@ class TestCrossEntropyLoss:
 
     def test_compute_loss_matches_legacy_weighted_sum(self) -> None:
         """Legacy reference:
-        ``target_weight * AttackPrompt.target_loss(logits, ids).mean(dim=-1)``
-        ``+ control_weight * AttackPrompt.control_loss(logits, ids).mean(dim=-1)``,
+        ``target_weight * AttackPrompt.target_loss(logits, ids=ids).mean(dim=-1)``
+        ``+ control_weight * AttackPrompt.control_loss(logits, ids=ids).mean(dim=-1)``,
         per ``GCGMultiPromptAttack.step`` in
         ``pyrit/executor/promptgen/gcg/attack/gcg/gcg_attack.py``.
         """
@@ -215,8 +215,8 @@ class TestCrossEntropyLoss:
         token_ids = torch.randint(0, vocab_size, (batch_size, seq_len))
 
         prompt = self._make_legacy_prompt(target_slice=target_slice, control_slice=control_slice)
-        legacy_target = prompt.target_loss(logits, token_ids).mean(dim=-1)
-        legacy_control = prompt.control_loss(logits, token_ids).mean(dim=-1)
+        legacy_target = prompt.target_loss(logits, ids=token_ids).mean(dim=-1)
+        legacy_control = prompt.control_loss(logits, ids=token_ids).mean(dim=-1)
         legacy_total = target_weight * legacy_target + control_weight * legacy_control
 
         default = CrossEntropyLoss(target_weight=target_weight, control_weight=control_weight)
@@ -243,7 +243,7 @@ class TestCrossEntropyLoss:
         token_ids = torch.randint(0, 25, (3, 9))
 
         prompt = self._make_legacy_prompt(target_slice=target_slice, control_slice=control_slice)
-        legacy_total = 1.0 * prompt.target_loss(logits, token_ids).mean(dim=-1)
+        legacy_total = 1.0 * prompt.target_loss(logits, ids=token_ids).mean(dim=-1)
 
         default = CrossEntropyLoss(target_weight=1.0, control_weight=0.0)
         default_total = default.compute_loss(
@@ -267,7 +267,7 @@ class TestCrossEntropyLoss:
         token_ids = torch.randint(0, 25, (3, 9))
 
         prompt = self._make_legacy_prompt(target_slice=target_slice, control_slice=control_slice)
-        legacy_total = 0.5 * prompt.control_loss(logits, token_ids).mean(dim=-1)
+        legacy_total = 0.5 * prompt.control_loss(logits, ids=token_ids).mean(dim=-1)
 
         default = CrossEntropyLoss(target_weight=0.0, control_weight=0.5)
         default_total = default.compute_loss(
@@ -432,7 +432,7 @@ class TestLengthPreservingFilter:
 
     def test_filter_candidates_matches_legacy_filtered(self) -> None:
         """Legacy reference:
-        ``MultiPromptAttack.get_filtered_cands(0, control_cand,
+        ``MultiPromptAttack.get_filtered_cands(0, control_cand=control_cand,
         filter_cand=True, curr_control=...)`` in
         ``pyrit/executor/promptgen/gcg/attack/base/attack_manager.py``.
 
@@ -449,7 +449,7 @@ class TestLengthPreservingFilter:
 
         legacy_attack = self._make_legacy_attack(tokenizer=_make_filter_tokenizer())
         legacy_out = legacy_attack.get_filtered_cands(
-            0, candidate_template.clone(), filter_cand=True, curr_control="never_matches"
+            0, control_cand=candidate_template.clone(), filter_cand=True, curr_control="never_matches"
         )
 
         default = LengthPreservingFilter(filter=True)
@@ -463,13 +463,13 @@ class TestLengthPreservingFilter:
         assert legacy_out == ["xxx", "xxx", "xxx"]
 
     def test_filter_candidates_matches_legacy_unfiltered(self) -> None:
-        """Legacy reference: ``get_filtered_cands(0, control_cand,
+        """Legacy reference: ``get_filtered_cands(0, control_cand=control_cand,
         filter_cand=False)``. Every row is decoded and returned unchanged.
         """
         candidate_template = torch.tensor([[3, 0, 1], [5, 0, 0], [2, 0, 1]])
 
         legacy_attack = self._make_legacy_attack(tokenizer=_make_filter_tokenizer())
-        legacy_out = legacy_attack.get_filtered_cands(0, candidate_template.clone(), filter_cand=False)
+        legacy_out = legacy_attack.get_filtered_cands(0, control_cand=candidate_template.clone(), filter_cand=False)
 
         default = LengthPreservingFilter(filter=False)
         default_out = default.filter_candidates(
@@ -490,7 +490,7 @@ class TestLengthPreservingFilter:
 
         legacy_input = candidate_template.clone()
         legacy_attack = self._make_legacy_attack(tokenizer=_make_filter_tokenizer())
-        legacy_attack.get_filtered_cands(0, legacy_input, filter_cand=False)
+        legacy_attack.get_filtered_cands(0, control_cand=legacy_input, filter_cand=False)
 
         default_input = candidate_template.clone()
         default = LengthPreservingFilter(filter=False)

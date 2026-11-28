@@ -131,8 +131,8 @@ class GCGCandidateEvaluator:
                             worker(
                                 self._prompts[k][i],
                                 ModelWorkerOperation.LOSS,
-                                cand,
-                                self._loss_function,
+                                test_controls=cand,
+                                loss_function=self._loss_function,
                                 use_prefix_cache=self._use_prefix_cache,
                             )
 
@@ -143,7 +143,9 @@ class GCGCandidateEvaluator:
                         del worker_losses
                     else:
                         for k, worker in enumerate(self._workers):
-                            worker(self._prompts[k][i], ModelWorkerOperation.LOGITS, cand, return_ids=True)
+                            worker(
+                                self._prompts[k][i], ModelWorkerOperation.LOGITS, test_controls=cand, return_ids=True
+                            )
 
                         logits, ids = zip(*[worker.results.get() for worker in self._workers], strict=True)
                         loss[j * batch_size : (j + 1) * batch_size] += sum(
