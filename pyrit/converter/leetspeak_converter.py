@@ -1,15 +1,33 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from pyrit.converter._character_substitution_converter import _CharacterSubstitutionConverter
 from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy, WordSelectionStrategy
-from pyrit.converter.word_level_converter import WordLevelConverter
 from pyrit.models import ComponentIdentifier
 
 
-class LeetspeakConverter(WordLevelConverter):
+class LeetspeakConverter(_CharacterSubstitutionConverter):
     """
     Converts a string to a leetspeak version.
+
+    Leetspeak is the look-alike member of the character-substitution family
+    (see ``_CharacterSubstitutionConverter``): by default it uses the standard leet table, and a
+    ``custom_substitutions`` map can override it.
     """
+
+    _DEFAULT_SUBSTITUTIONS = {
+        "a": ["4", "@", "/\\", "@", "^", "/-\\"],
+        "b": ["8", "6", "13", "|3", "/3", "!3"],
+        "c": ["(", "[", "<", "{"],
+        "e": ["3"],
+        "g": ["9"],
+        "i": ["1", "!"],
+        "l": ["1", "|"],
+        "o": ["0"],
+        "s": ["5", "$"],
+        "t": ["7"],
+        "z": ["2"],
+    }
 
     def __init__(
         self,
@@ -34,65 +52,17 @@ class LeetspeakConverter(WordLevelConverter):
             ValueError: If ``custom_substitutions`` has a key that is not a single character, two keys
                 that differ only in case, or a value that is not a non-empty list of strings.
         """
-        super().__init__(word_selection_strategy=word_selection_strategy)
-
-        default_substitutions = {
-            "a": ["4", "@", "/\\", "@", "^", "/-\\"],
-            "b": ["8", "6", "13", "|3", "/3", "!3"],
-            "c": ["(", "[", "<", "{"],
-            "e": ["3"],
-            "g": ["9"],
-            "i": ["1", "!"],
-            "l": ["1", "|"],
-            "o": ["0"],
-            "s": ["5", "$"],
-            "t": ["7"],
-            "z": ["2"],
-        }
-
         if custom_substitutions is not None:
-            custom_substitutions = self._validate_custom_substitutions(custom_substitutions)
+            custom_substitutions = self._validate_substitutions(custom_substitutions, param_name="custom_substitutions")
 
         # Use custom substitutions if provided, otherwise default to the standard ones
-        self._leet_substitutions = custom_substitutions if custom_substitutions else default_substitutions
-        self._deterministic = deterministic
+        substitutions = custom_substitutions if custom_substitutions else self._DEFAULT_SUBSTITUTIONS
+        super().__init__(
+            substitutions=substitutions,
+            deterministic=deterministic,
+            word_selection_strategy=word_selection_strategy,
+        )
         self._has_custom_substitutions = custom_substitutions is not None
-
-    @staticmethod
-    def _validate_custom_substitutions(custom_substitutions: dict[str, list[str]]) -> dict[str, list[str]]:
-        """
-        Validate custom substitutions and key them by lowercase character.
-
-        ``convert_word_async`` looks characters up in lowercase, so an uppercase or multi-character
-        key would never match, and an empty replacement list would fail on the first matching character.
-
-        Args:
-            custom_substitutions (dict[str, list[str]]): The substitutions passed to the converter.
-
-        Returns:
-            dict[str, list[str]]: The substitutions keyed by lowercase character.
-
-        Raises:
-            ValueError: If a key is not a single character, two keys differ only in case, or a value
-                is not a non-empty list of strings.
-        """
-        normalized: dict[str, list[str]] = {}
-        for char, replacements in custom_substitutions.items():
-            if not isinstance(char, str) or len(char) != 1:
-                raise ValueError(f"custom_substitutions keys must be single characters, got {char!r}.")
-            if (
-                not isinstance(replacements, list)
-                or not replacements
-                or not all(isinstance(replacement, str) for replacement in replacements)
-            ):
-                raise ValueError(
-                    f"custom_substitutions[{char!r}] must be a non-empty list of strings, got {replacements!r}."
-                )
-            lower_char = char.lower()
-            if lower_char in normalized:
-                raise ValueError(f"custom_substitutions has more than one key for {lower_char!r}.")
-            normalized[lower_char] = list(replacements)
-        return normalized
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -107,7 +77,7 @@ class LeetspeakConverter(WordLevelConverter):
         # Hash custom substitutions if provided
         substitutions_hash = None
         if self._has_custom_substitutions:
-            substitutions_str = json.dumps(self._leet_substitutions, sort_keys=True)
+            substitutions_str = json.dumps(self._substitutions, sort_keys=True)
             substitutions_hash = hashlib.sha256(substitutions_str.encode("utf-8")).hexdigest()[:16]
 
         selection_params = (
@@ -125,7 +95,7 @@ class LeetspeakConverter(WordLevelConverter):
 
     async def convert_word_async(self, word: str) -> str:
         """
-        Convert a single word into the target format supported by the converter.
+        Convert a single word into leetspeak.
 
         Args:
             word (str): The word to be converted.
@@ -133,18 +103,4 @@ class LeetspeakConverter(WordLevelConverter):
         Returns:
             str: The converted word.
         """
-        converted_word = []
-        rng = self._get_random_generator(stream="character-substitutions")
-        for char in word:
-            lower_char = char.lower()
-            if lower_char in self._leet_substitutions:
-                if self._deterministic:
-                    # Use the first substitution for deterministic mode
-                    converted_word.append(self._leet_substitutions[lower_char][0])
-                else:
-                    # Randomly select a substitution for each character
-                    converted_word.append(rng.choice(self._leet_substitutions[lower_char]))
-            else:
-                # If character not in substitutions, keep it as is
-                converted_word.append(char)
-        return "".join(converted_word)
+        return self._substitute_word(word)

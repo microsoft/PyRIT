@@ -11,9 +11,11 @@ import {
   MessageBar,
   MessageBarBody,
 } from '@fluentui/react-components'
-import { SearchRegular } from '@fluentui/react-icons'
+import { SearchRegular, SparkleRegular } from '@fluentui/react-icons'
 import { useLocation, useNavigate, useSearchParams } from 'react-router'
 
+import { newPromptGenerationRoutePath } from '@/components/PromptGeneration/promptGenerationRoutes'
+import { datasetOriginLabel } from '@/components/Scenarios/datasetPresentation'
 import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
 import { useLoadedDatasets } from '@/hooks/useLoadedDatasets'
 import type { DatasetInfo, FilterOption } from '@/types'
@@ -61,6 +63,14 @@ function harmOptions(datasets: readonly DatasetInfo[], view: DatasetCatalogQuery
   return uniqueLabels(values)
 }
 
+function originOptions(datasets: readonly DatasetInfo[]): FilterOption[] {
+  const values = new Set<string>()
+  for (const dataset of datasets) for (const origin of dataset.origins ?? []) values.add(origin)
+  return [...values]
+    .map((value) => ({ value, label: datasetOriginLabel(value) }))
+    .sort((left, right) => left.label.localeCompare(right.label, 'en', { sensitivity: 'base' }))
+}
+
 /** Stored datasets and available providers share URL-backed views and filters. */
 export default function DatasetCatalog() {
   const styles = useDatasetCatalogStyles()
@@ -87,6 +97,7 @@ export default function DatasetCatalog() {
   const selectedModalities = [...new Set(query.modalities.map(
     (modality: string) => normalizeDatasetModality(modality, modalityAliases),
   ))]
+  const origins = useMemo(() => originOptions(viewDatasets), [viewDatasets])
   const filtersActive = !catalogQueryIsDefault({ ...query, view: 'memory' })
 
   const updateQuery = (next: DatasetCatalogQuery): void => {
@@ -106,17 +117,26 @@ export default function DatasetCatalog() {
         <div className={styles.headerText}>
           <Text id={titleId} as="h1" size={600} weight="semibold">Datasets</Text>
           {chatOrigin && <Button appearance="subtle" className={styles.touchTarget}
-            onClick={() => navigate(chatOrigin.path, { state: chatOrigin.state })}>Return to Chat</Button>}
+            onClick={() => { void navigate(chatOrigin.path, { state: chatOrigin.state }) }}>Return to Chat</Button>}
           <Text size={300} className={styles.subtitle}>
             Browse stored datasets and built-in providers. Search, filters, and sort stay in the address bar.
           </Text>
         </div>
+        <Button
+          className={styles.touchTarget}
+          appearance="primary"
+          icon={<SparkleRegular />}
+          onClick={() => { void navigate(newPromptGenerationRoutePath()) }}
+          data-testid="generate-dataset-btn"
+        >
+          Generate datasets
+        </Button>
       </div>
 
       <Text size={200}>
         {view === 'memory'
           ? 'Filters describe stored seeds. Not labeled means stored seeds without harm categories.'
-          : 'Filters use provider declarations for built-ins and stored values for other datasets. Not labeled applies only to stored values.'}
+          : 'Filters use provider declarations for built-ins and stored values for other datasets. Origins and Not labeled apply only to stored values.'}
       </Text>
 
       <div className={styles.filters}>
@@ -165,6 +185,16 @@ export default function DatasetCatalog() {
           checked={query.unlabeled}
           onChange={(_, data) => updateQuery({ ...query, unlabeled: data.checked === true })}
           label="Not labeled"
+        />
+        <SearchableMultiCombobox
+          className={styles.filterControl}
+          ariaLabel="Origins"
+          placeholder="All origins"
+          summaryPrefix="Origins"
+          options={origins}
+          selectedOptions={[...query.origins]}
+          onSelect={(selected) => updateQuery({ ...query, origins: selected })}
+          testId="dataset-origin-filter"
         />
         <Select
           className={styles.filterControl}

@@ -101,12 +101,16 @@ Here are some examples:
 | Example                             | Chat-style target?                                | Notes                                                                                           |
 |-------------------------------------|---------------------------------------------------|-------------------------------------------------------------------------------------------------|
 | **OpenAIChatTarget** (e.g., GPT-4)  | **Yes** (multi-turn + editable history)           | Designed for conversational prompts (system messages, conversation history, etc.).               |
+| **ClaudeChatTarget**               | **Yes** (multi-turn + editable history)           | Native Anthropic Messages via LiteLLM, with text/images and bounded local tool execution.         |
 | **OpenAIImageTarget**               | **No**                                            | Used for image generation; does not manage conversation history.                                 |
 | **HTTPTarget**                      | **No**                                            | Generic HTTP target. Some apps might allow conversation history, but this target doesn't handle it. |
 | **A2ATarget**                       | **No** (multi-turn, but no editable history)     | Text-only Agent-to-Agent endpoints through the official a2a-sdk (v0.3 / v1.0).                |
 | **AzureBlobStorageTarget**          | **No**                                            | Used primarily for storage; not for conversation-based AI.                                       |
 
 ## OpenAI SDK compatibility
+
+For Claude installation, authentication, capabilities, JSON output, and a harmless
+async tool example, see [Claude chat target](claude_chat_target.md).
 
 PyRIT supports OpenAI Python SDK 2.20 and later 2.x releases, and SDK 3.x.
 The upper bound excludes SDK 4 until it has been evaluated. The compatibility
@@ -383,4 +387,4 @@ Like most of PyRIT, targets can be multi-modal.
 
 - [OpenAI Chat Target](./1_openai_chat_target.ipynb) (*text + image --> text*)
 - [OpenAI Image Target](./3_openai_image_target.ipynb) (*text --> image* or *text + image --> image*)
-- [OpenAI TTS Target](./5_openai_tts_target.ipynb) (*text --> audio*)
+- [OpenAI TTS Target](./5_openai_tts_target.ipynb) (*text --> audio*) **Deprecated; scheduled for removal in 1.5.0.** Use `AzureSpeechTextToAudioConverter` for text-to-audio conversion.

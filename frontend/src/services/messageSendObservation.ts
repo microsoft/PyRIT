@@ -42,9 +42,15 @@ export function observeMessageSend(
   }).finally(() => { pending = undefined })
   let attackRead: Promise<AttackSummary> | undefined
   let attackRevision = -1
+  // Replays the original rejection cause unchanged: callers inspect it (toApiError),
+  // so it must not be wrapped in an Error, and an async throw satisfies
+  // prefer-promise-reject-errors where Promise.reject(unknown) would not.
+  const replayFailure = async (cause: unknown): Promise<never> => {
+    throw cause
+  }
   const pollProgress = (): Promise<MessageSendStatus> => {
     if (pending) return pending
-    if (progressFailure) return Promise.reject(progressFailure.cause)
+    if (progressFailure) return replayFailure(progressFailure.cause)
     if (!latest) return Promise.reject(new Error('The send has no confirmed acceptance.'))
     if (finished(latest)) return Promise.resolve(latest)
     pending = attacksApi.getMessageSend(attackId, latest.send_id).then((progress: MessageSendStatus) => {
@@ -60,7 +66,7 @@ export function observeMessageSend(
   const observation: MessageSendObservation = {
     readProgress: (refresh: boolean = false): Promise<MessageSendStatus> => {
       if (refresh && latest) progressFailure = undefined
-      if (progressFailure) return Promise.reject(progressFailure.cause)
+      if (progressFailure) return replayFailure(progressFailure.cause)
       // A view must see a completed sibling even if the owner is already polling the next snapshot.
       if (latest && progressRevision > deliveredRevision) {
         deliveredRevision = progressRevision

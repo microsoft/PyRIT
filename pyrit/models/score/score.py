@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 from uuid import uuid4
 
 from pydantic import (
@@ -67,7 +67,7 @@ _TRUE_FALSE_VALUES = ("true", "false")
 ComponentIdentifierField = Annotated[
     ComponentIdentifier,
     BeforeValidator(lambda v: ComponentIdentifier.model_validate(v) if isinstance(v, dict) else v),
-    PlainSerializer(lambda v: v.model_dump() if v is not None else None, return_type=dict | None),
+    PlainSerializer(lambda v: v.model_dump() if v is not None else None, return_type=dict[str, Any] | None),
 ]
 
 
@@ -229,7 +229,7 @@ class Score(BaseModel):
         return observation_ids
 
     @model_validator(mode="after")
-    def _validate_score_value(self) -> Score:
+    def _validate_score_value(self) -> Self:
         """
         Enforce that ``score_value`` is present iff the score is complete, and type-consistent.
 
@@ -246,7 +246,7 @@ class Score(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _reconcile_message_piece_id(self) -> Score:
+    def _reconcile_message_piece_id(self) -> Self:
         """
         Keep ``message_piece_id`` consistent with a message anchor.
 
@@ -273,7 +273,7 @@ class Score(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _sync_compatibility_objective(self) -> Score:
+    def _sync_compatibility_objective(self) -> Self:
         """
         Refresh the derived, read-only ``objective`` view from ``scored_expectation``.
 

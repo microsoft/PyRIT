@@ -45,6 +45,7 @@ import hashlib
 import re
 import sys
 from enum import Enum
+from typing import TYPE_CHECKING, assert_never
 
 from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -486,22 +487,30 @@ class PackageHallucinationScorer(MessageTrueFalseScorer):
         self._score_categories = categories if categories is not None else ["package_hallucination"]
 
         known = set(known_packages)
-        if ecosystem is PackageEcosystem.PYTHON:
-            # PyPI lists normalized names (PEP 503), so code that imports typing_extensions or IPython
-            # is looking for "typing-extensions" or "ipython".
-            known = {self._normalize_python_name(package) for package in known | set(sys.stdlib_module_names)}
-        elif ecosystem is PackageEcosystem.RUST:
-            # crates.io treats "-" and "_" as the same name, and Rust code can only write "_".
-            known = {package.replace("-", "_") for package in known}
-            known |= self._RUST_BUILTIN_CRATES | self._RUST_STD_ENTRIES
-        elif ecosystem is PackageEcosystem.DART:
-            known = {package.lower() for package in known} | self._DART_SDK_PACKAGES
-        elif ecosystem is PackageEcosystem.PERL:
-            known |= self._PERL_CORE_MODULES
-        elif ecosystem is PackageEcosystem.RAKU:
-            known |= self._RAKU_CORE_MODULES
-        elif ecosystem is PackageEcosystem.RUBY:
-            known |= self._RUBY_BUILTIN_FEATURES
+        match ecosystem:
+            case PackageEcosystem.PYTHON:
+                # PyPI lists normalized names (PEP 503), so code that imports typing_extensions or IPython
+                # is looking for "typing-extensions" or "ipython".
+                known = {self._normalize_python_name(package) for package in known | set(sys.stdlib_module_names)}
+            case PackageEcosystem.RUST:
+                # crates.io treats "-" and "_" as the same name, and Rust code can only write "_".
+                known = {package.replace("-", "_") for package in known}
+                known |= self._RUST_BUILTIN_CRATES | self._RUST_STD_ENTRIES
+            case PackageEcosystem.DART:
+                known = {package.lower() for package in known} | self._DART_SDK_PACKAGES
+            case PackageEcosystem.PERL:
+                known |= self._PERL_CORE_MODULES
+            case PackageEcosystem.RAKU:
+                known |= self._RAKU_CORE_MODULES
+            case PackageEcosystem.RUBY:
+                known |= self._RUBY_BUILTIN_FEATURES
+            case PackageEcosystem.JAVASCRIPT:
+                # npm names are matched as written; Node.js built-ins are skipped during extraction instead.
+                pass
+            case _:
+                if TYPE_CHECKING:
+                    assert_never(ecosystem)
+                # Preserve the historical runtime fallback for values outside the declared enum.
 
         self._known_packages = known
 
@@ -521,7 +530,7 @@ class PackageHallucinationScorer(MessageTrueFalseScorer):
                 # The reference set decides every verdict, so its content is part of the identity.
                 "known_packages_digest": hashlib.sha256("\0".join(sorted(self._known_packages)).encode()).hexdigest(),
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
         )
 
     @staticmethod

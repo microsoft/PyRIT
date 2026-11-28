@@ -6,10 +6,11 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import TypeAdapter
 
-from pyrit.models import AttackResult, OutcomeStatistics, ScenarioProducerCounts, ScenarioResult
+from pyrit.models import AttackOutcome, AttackResult, OutcomeStatistics, ScenarioProducerCounts, ScenarioResult
 from pyrit.output._derivation import (
     attack_score_display,
     attack_technique_label,
+    objective_scorer_label,
     resolve_target_info,
     scenario_overview,
     select_attacks,
@@ -67,6 +68,7 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         view: ScenarioView = "overview",
         attack_result_ids: list[str] | None = None,
         limit: int | None = None,
+        outcome: AttackOutcome | None = None,
     ) -> str:
         """
         Render a scenario result's ``overview`` or ``attacks`` view as JSON.
@@ -80,11 +82,13 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
             view (ScenarioView): ``"overview"`` or ``"attacks"``. Defaults to ``"overview"``.
             attack_result_ids (list[str] | None): For ``"attacks"``, restrict to these ids.
             limit (int | None): For ``"attacks"``, the maximum number of attacks.
+            outcome (AttackOutcome | None): For ``"attacks"``, keep only attacks with this outcome
+                before applying ``limit``. Ignored by the overview. Defaults to None.
 
         Returns:
             str: The rendered JSON document.
         """
-        payload = self.build(result, view=view, attack_result_ids=attack_result_ids, limit=limit)
+        payload = self.build(result, view=view, attack_result_ids=attack_result_ids, limit=limit, outcome=outcome)
         return self._dumps(payload)
 
     def build(
@@ -94,6 +98,7 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         view: ScenarioView = "overview",
         attack_result_ids: list[str] | None = None,
         limit: int | None = None,
+        outcome: AttackOutcome | None = None,
     ) -> dict[str, Any]:
         """
         Build the structured (dict) payload for a scenario ``view``.
@@ -105,12 +110,14 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
             view (ScenarioView): ``"overview"`` or ``"attacks"``. Defaults to ``"overview"``.
             attack_result_ids (list[str] | None): For ``"attacks"``, restrict to these ids.
             limit (int | None): For ``"attacks"``, the maximum number of attacks.
+            outcome (AttackOutcome | None): For ``"attacks"``, keep only attacks with this outcome
+                before applying ``limit``. Ignored by the overview. Defaults to None.
 
         Returns:
             dict[str, Any]: The view-shaped payload.
         """
         if view == "attacks":
-            return self._build_attacks(result, attack_result_ids=attack_result_ids, limit=limit)
+            return self._build_attacks(result, attack_result_ids=attack_result_ids, limit=limit, outcome=outcome)
         return self._build_overview(result)
 
     def _build_overview(self, result: ScenarioResult) -> dict[str, Any]:
@@ -149,6 +156,36 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         else:
             scorer = None
 
+        objective_scorers = [
+            {
+                "label": objective_scorer_label(objective_scorer),
+                "attribution": objective_scorer.attribution.value,
+                "scorer_hash": objective_scorer.scorer_hash,
+                "candidate_index": objective_scorer.candidate_index,
+                "evaluation": objective_scorer.evaluation,
+                "scorer": (
+                    self._scorer_printer.build(scorer_identifier=objective_scorer.scorer_identifier)
+                    if objective_scorer.scorer_identifier is not None and self._scorer_printer is not None
+                    else None
+                ),
+                "planned": objective_scorer.overall.planned,
+                "num_objective_executions": objective_scorer.overall.completed,
+                "outcomes": self._OUTCOME_ADAPTER.dump_python(objective_scorer.overall.outcomes, mode="json"),
+                "success_rate_decided": (
+                    objective_scorer.overall.outcomes.success_rate_decided
+                    if objective_scorer.overall.outcomes is not None
+                    else None
+                ),
+                "success_rate_all": (
+                    objective_scorer.overall.outcomes.success_rate_all
+                    if objective_scorer.overall.outcomes is not None
+                    else None
+                ),
+                "atomic_attacks": list(objective_scorer.atomic_attacks),
+            }
+            for objective_scorer in overview.objective_scorers
+        ]
+
         return {
             "view": "overview",
             "scenario": {
@@ -172,7 +209,11 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
                 "outcomes": self._OUTCOME_ADAPTER.dump_python(overview.outcomes, mode="json"),
                 "producer_counts": self._PRODUCER_ADAPTER.dump_python(overview.producer_counts, mode="json"),
                 "unique_objectives": len(result.get_objectives()),
+                "objective_scorer_scope": overview.objective_scorer_scope.value
+                if overview.objective_scorer_scope is not None
+                else None,
             },
+            "objective_scorers": objective_scorers,
             "groups": groups,
         }
 
@@ -182,19 +223,21 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         *,
         attack_result_ids: list[str] | None = None,
         limit: int | None = None,
+        outcome: AttackOutcome | None = None,
     ) -> dict[str, Any]:
         """
-        Build the ``attacks`` payload, honoring the id filter and limit.
+        Build the ``attacks`` payload, honoring the id and outcome filters before the limit.
 
         Args:
             result (ScenarioResult): The scenario result.
             attack_result_ids (list[str] | None): Restrict to these attack ids.
             limit (int | None): Maximum number of attacks to include.
+            outcome (AttackOutcome | None): Keep only attacks with this outcome. Defaults to None.
 
         Returns:
             dict[str, Any]: The attacks envelope with ``shown`` / ``total`` counts.
         """
-        selected = select_attacks(result, attack_result_ids=attack_result_ids)
+        selected = select_attacks(result, attack_result_ids=attack_result_ids, outcome=outcome)
         total = len(selected)
         if limit is not None:
             selected = selected[:limit]

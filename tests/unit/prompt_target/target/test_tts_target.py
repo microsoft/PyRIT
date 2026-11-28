@@ -33,6 +33,19 @@ def test_tts_initializes(tts_target: OpenAITTSTarget):
     assert tts_target
 
 
+def test_tts_initialization_warns_about_removal_and_converter_migration(patch_central_database) -> None:
+    with pytest.warns(
+        DeprecationWarning,
+        match=r"OpenAITTSTarget is deprecated and will be removed in 1\.5\.0.*AzureSpeechTextToAudioConverter",
+    ) as warnings:
+        target = OpenAITTSTarget(model_name="test", endpoint="https://test.com", api_key="test")
+
+    tts_warnings = [warning for warning in warnings if "OpenAITTSTarget is deprecated" in str(warning.message)]
+    assert len(tts_warnings) == 1
+    assert tts_warnings[0].filename == __file__
+    assert target
+
+
 def test_tts_initializes_calls_get_required_parameters(patch_central_database):
     with (
         patch("pyrit.common.default_values.get_required_value") as mock_get_required,
@@ -249,3 +262,25 @@ async def test_tts_send_prompt_with_speed_parameter(
         assert file_path
         assert os.path.exists(file_path)
         os.remove(file_path)
+
+
+async def test_tts_send_prompt_omits_unset_speed_async(
+    tts_target: OpenAITTSTarget,
+    sample_conversations: MutableSequence[MessagePiece],
+) -> None:
+    # The SDK serializes an explicit speed=None as JSON null, which gpt-4o-mini-tts rejects.
+    message_piece = sample_conversations[0]
+    message_piece.conversation_id = str(uuid.uuid4())
+    request = Message(message_pieces=[message_piece])
+
+    mock_audio_response = MagicMock()
+    mock_audio_response.content = b"audio data"
+
+    with patch.object(tts_target._async_client.audio.speech, "create", new_callable=AsyncMock) as mock_create:
+        mock_create.return_value = mock_audio_response
+        response = await tts_target.send_prompt_async(message=request)
+
+        mock_create.assert_called_once()
+        assert "speed" not in mock_create.call_args.kwargs
+
+        os.remove(response[0].get_value())

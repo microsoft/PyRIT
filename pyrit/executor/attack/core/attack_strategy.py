@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, assert_never, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Self, TypeVar, assert_never, overload
 
 from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.common.logger import logger
@@ -46,6 +46,7 @@ from pyrit.models import (
     Identifiable,
     Message,
     Score,
+    ScorerCapabilityName,
     ScorerIdentifier,
     ScoringExpectation,
     SeedPrompt,
@@ -53,7 +54,7 @@ from pyrit.models import (
     UndeterminedScoreError,
 )
 from pyrit.prompt_target import CapabilityName, TargetRequirements
-from pyrit.score import AttemptObserver
+from pyrit.score import AttemptObserver, ScorerRequirements
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Collection, Generator
@@ -147,7 +148,7 @@ class _ObjectiveTargetConversationLifecycle:
         self._logger = logger
         self._conversation_ids: set[str] = set()
 
-    async def __aenter__(self) -> _ObjectiveTargetConversationLifecycle:
+    async def __aenter__(self) -> Self:
         """
         Start tracking target invocations.
 
@@ -740,6 +741,15 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         native_required=frozenset({CapabilityName.RESPONSES})
     )
     ADVERSARIAL_TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+    #: What the attack's algorithm needs from its objective scorer. Attacks decide success from a
+    #: true/false verdict by default; one that also ranks by float feedback adds
+    #: ``PRESERVES_FLOAT_SCALE_VALUE``. Validated in ``__init__`` through
+    #: ``_validate_objective_scorer``, and combined by scenarios with technique and dataset
+    #: requirements before selecting a scorer. Never an evaluation, which belongs to the
+    #: scenario or the dataset.
+    OBJECTIVE_SCORER_REQUIREMENTS: ClassVar[ScorerRequirements] = ScorerRequirements(
+        required=frozenset({ScorerCapabilityName.TRUE_FALSE})
+    )
     #: A fixed execution-input contract for attacks that do not expose ``params_type``.
     FIXED_PARAMS_TYPE: ClassVar[type[AttackParameters] | None] = None
 
@@ -840,6 +850,23 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             self._request_converters: list[Any] = []
         if not hasattr(self, "_response_converters"):
             self._response_converters: list[Any] = []
+
+    def _validate_objective_scorer(self, *, scorer: Scorer | None) -> None:
+        """
+        Require the objective scorer to meet ``OBJECTIVE_SCORER_REQUIREMENTS``.
+
+        Args:
+            scorer (Scorer | None): The resolved objective scorer; ``None`` is not checked.
+
+        Raises:
+            ValueError: Naming every capability the scorer lacks.
+        """
+        if scorer is None:
+            return
+        try:
+            type(self).OBJECTIVE_SCORER_REQUIREMENTS.validate(scorer=scorer)
+        except ValueError as exc:
+            raise ValueError(f"{type(self).__name__} objective scorer: {exc}") from exc
 
     def _get_prepended_normalizer_overrides(
         self,

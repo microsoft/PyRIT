@@ -14,8 +14,9 @@ command line is::
         --data inputs/data.json \\
         --output-dir ${{outputs.results}}
 
-This file deserializes both configs inside the job, loads goals/targets from
-the configured CSV, and runs the attack via a fresh ``GCGGenerator``.
+This file deserializes both configs inside the job and runs the attack via a
+fresh ``GCGGenerator``. The goals and targets travel inline in ``data.json``, so
+the job never fetches data from the public internet.
 """
 
 import argparse
@@ -54,7 +55,7 @@ def _parse_arguments() -> argparse.Namespace:
         "--data",
         type=str,
         required=True,
-        help="Path to a JSON file produced by GCGDataConfig.to_json_file() (CSV paths + counts).",
+        help="Path to a JSON file produced by GCGDataConfig.to_json_file() (inline goals + targets).",
     )
     parser.add_argument(
         "--output-dir",
@@ -84,7 +85,7 @@ def _resolve_output(*, output: GCGOutputConfig, output_dir: str | None) -> GCGOu
     return replace(output, result_prefix=str(Path(output_dir) / base))
 
 
-async def _main_async(config_path: str, data_path: str, output_dir: str | None = None) -> None:
+async def _main_async(*, config_path: str, data_path: str, output_dir: str | None = None) -> None:
     _load_environment_files(env_files=None)
     config = GCGConfig.from_json_file(config_path)
     data = GCGDataConfig.from_json_file(data_path)
@@ -105,9 +106,7 @@ async def _main_async(config_path: str, data_path: str, output_dir: str | None =
         output=output,
         hf_token=config.hf_token,
     )
-    train_goals, train_targets, test_goals, test_targets = load_goals_and_targets(
-        data=data, random_seed=config.algorithm.random_seed
-    )
+    train_goals, train_targets, test_goals, test_targets = load_goals_and_targets(data=data)
     await generator.execute_async(
         goals=train_goals,
         targets=train_targets,
@@ -116,6 +115,6 @@ async def _main_async(config_path: str, data_path: str, output_dir: str | None =
     )
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - AzureML job entry point
     args = _parse_arguments()
-    asyncio.run(_main_async(args.config, args.data, args.output_dir))
+    asyncio.run(_main_async(config_path=args.config, data_path=args.data, output_dir=args.output_dir))

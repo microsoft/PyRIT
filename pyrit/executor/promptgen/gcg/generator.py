@@ -481,9 +481,9 @@ class GCGGenerator(
         control_init = params.control_init
         if self._strategy.transfer:
             return ProgressiveMultiPromptAttack(
-                train_goals,
-                train_targets,
-                workers,
+                goals=train_goals,
+                targets=train_targets,
+                workers=workers,
                 progressive_models=self._strategy.progressive_models,
                 progressive_goals=self._strategy.progressive_goals,
                 control_init=control_init,
@@ -497,9 +497,9 @@ class GCGGenerator(
                 mpa_n_steps=self._algorithm.n_steps,
             )
         return IndividualPromptAttack(
-            train_goals,
-            train_targets,
-            workers,
+            goals=train_goals,
+            targets=train_targets,
+            workers=workers,
             control_init=control_init,
             logfile=logfile_path,
             managers=managers,

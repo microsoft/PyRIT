@@ -145,7 +145,7 @@ class LlamaGuardScorer(MessageTrueFalseScorer):
                 "policy": self._policy.model_dump(),
                 "prompt_template": self._prompt_template.value,
             },
-            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:missing-attribute]
             prompt_target=self._prompt_target.get_identifier(),
         )
 
