@@ -55,6 +55,10 @@ if TYPE_CHECKING:
     from pyrit.score.float_scale.strongreject_parser import parse_strongreject_response
     from pyrit.score.float_scale.strongreject_scorer import StrongRejectScorer, render_strongreject_prompt
     from pyrit.score.float_scale.system_prompt_extraction_scorer import SystemPromptExtractionScorer
+    from pyrit.score.float_scale.unicode_obfuscation_scorer import (
+        UnicodeObfuscationChannel,
+        UnicodeObfuscationScorer,
+    )
     from pyrit.score.float_scale.video_float_scale_scorer import VideoFloatScaleScorer
     from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.message_scorer import MessageScorer
@@ -418,6 +422,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "TrueFalseScoreAggregator": "pyrit.score.true_false.true_false_score_aggregator",
     "TrueFalseAggregatorFunc": "pyrit.score.true_false.true_false_score_aggregator",
     "TrueFalseScorer": "pyrit.score.true_false.true_false_scorer",
+    "UnicodeObfuscationChannel": "pyrit.score.float_scale.unicode_obfuscation_scorer",
+    "UnicodeObfuscationScorer": "pyrit.score.float_scale.unicode_obfuscation_scorer",
     "VideoFloatScaleScorer": "pyrit.score.float_scale.video_float_scale_scorer",
     "VideoTrueFalseScorer": "pyrit.score.true_false.video_true_false_scorer",
     "LocalViolenceClassifierScorer": "pyrit.score.float_scale.local_violence_classifier_scorer",
