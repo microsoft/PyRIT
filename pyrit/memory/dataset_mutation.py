@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, assert_never, get_args
 
 from pydantic import TypeAdapter
-from sqlalchemy import inspect, select
+from sqlalchemy import and_, inspect, not_, or_, select
 
 from pyrit.memory.dataset_lifecycle import (
     DatasetNameConflictError,
@@ -363,6 +363,22 @@ async def commit_mutation_async(
             raise ValueError("A mutation requires at least one operation.")
         if len({seed.id for seed in seeds}) != len(seeds) or set(delete_ids) & {seed.id for seed in seeds}:
             raise ValueError("Duplicate or overlapping edit/delete record IDs.")
+        if delete_ids:
+            # Mirrors MemoryInterface._validate_decomposition_deletion for the async
+            # session: a batch that removes one end of a stored parent child link
+            # would leave the surviving side referencing a record that no longer exists.
+            deletion = select(SeedEntry.id).where(SeedEntry.id.in_(delete_ids)).cte()
+            selected = SeedEntry.id.in_(select(deletion.c.id))
+            parent_selected = SeedEntry.parent_objective_id.in_(select(deletion.c.id))
+            boundary = select(SeedEntry.id).where(
+                SeedEntry.parent_objective_id.is_not(None),
+                or_(and_(selected, not_(parent_selected)), and_(not_(selected), parent_selected)),
+            )
+            if (await session.execute(boundary)).first() is not None:
+                raise ValueError(
+                    "Deletion must include the whole decomposition tree; select every objective in the tree "
+                    "(for example, by dataset_name). No seeds were deleted."
+                )
         await asyncio.to_thread(
             _validate_final_groups,
             original=entries,
