@@ -2263,6 +2263,18 @@ class AttackResultEntry(Base):
             mssql_include=["labels"],
             info={"dialect": "mssql"},
         ).ddl_if(dialect="mssql"),
+        Index(
+            "ix_AttackResultEntries_analytics_operation_id_labels_sqlite",
+            "operation_id",
+            "labels",
+            info={"dialect": "sqlite"},
+        ).ddl_if(dialect="sqlite"),
+        Index(
+            "ix_AttackResultEntries_analytics_operation_id_labels_mssql",
+            "operation_id",
+            mssql_include=["labels"],
+            info={"dialect": "mssql"},
+        ).ddl_if(dialect="mssql"),
         # Serves the PARTITION BY conversation_id dedup window in _query_paginated_attack_results.
         Index(
             "ix_AttackResultEntries_conversation_timestamp_id",

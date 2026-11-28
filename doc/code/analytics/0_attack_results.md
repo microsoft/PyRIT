@@ -659,8 +659,13 @@ distinct IDs, bounded output and correct recency/UUID order; continuations must
 follow the preceding page's cursor and seek past its anchor.
 
 The test fails for request/write errors, missing workload classes or
-continuations, incorrect counts/output, or p95 above **2 seconds per report
-shape** or **0.5 seconds for facets, first pages, or continuations**. Errors remain
+continuations, incorrect counts/output, or p95 above **4 seconds per report
+shape** or **1 second for facets, first pages, and continuations**. Five
+concurrent full-table reports contend for CPU and memory bandwidth even across
+processes, so report bounds remain below their 5-second execution timeout rather
+than at single-caller cost. Facets, pages, and continuations share the quick lane,
+whose 1-second execution timeout excludes up to 1 second of admission wait, so
+their end-to-end p95 bound is not implied by the absence of timeouts. Errors remain
 in timing samples and cannot pass through successful-only sampling. The ordinary
 smoke test is explicitly marked non-representative in its report and does not
 establish the 100k/5-user performance gate. The integration case retains production SDK

@@ -347,7 +347,7 @@ async def test_scalar_facet_filter_uses_index_and_preserves_exact_any_values(sql
     [([], {"first"}), (["Engagement"], {"first", "second"})],
     ids=["id_only", "id_and_legacy_name"],
 )
-async def test_operation_id_filter_uses_operation_id_index(
+async def test_operation_id_filter_uses_covering_label_index(
     *, sqlite_instance: SQLiteMemory, legacy_names: list[str], expected: set[str]
 ) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
@@ -369,7 +369,9 @@ async def test_operation_id_filter_uses_operation_id_index(
     async with await sqlite_instance.get_session_async() as session:
         plan = await session.execute(text("EXPLAIN QUERY PLAN " + compiled))
         steps = [row[3] for row in plan]
-    assert any("USING INDEX ix_AttackResultEntries_operation_id " in step for step in steps), steps
+    access = "USING INDEX" if legacy_names else "USING COVERING INDEX"
+    index = "ix_AttackResultEntries_analytics_operation_id_labels_sqlite (operation_id=?)"
+    assert any(f"{access} {index}" in step for step in steps), steps
     if legacy_names:
         assert any("SEARCH analytics_results" in step and "operation=?" in step for step in steps), steps
     result = await AttackAnalyticsReader(memory=sqlite_instance).facets_async(query=query, control=control())
