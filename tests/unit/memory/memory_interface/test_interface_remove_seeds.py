@@ -360,6 +360,31 @@ async def test_remove_seeds_multi_filter_narrowing(sqlite_instance: MemoryInterf
     assert len(remaining) == 2
 
 
+@pytest.mark.parametrize("empty_filter", ["prompt_group_ids", "value_sha256"])
+async def test_remove_seeds_empty_id_list_matches_nothing(sqlite_instance: MemoryInterface, empty_filter: str):
+    groups = [
+        SeedGroup(seeds=[SeedPrompt(value=f"prompt{i}", dataset_name="ds", data_type="text", sequence=0)])
+        for i in range(3)
+    ]
+    await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=groups, added_by="test")
+
+    # An explicitly empty selection must not fall back to the dataset filter alone.
+    removed = await sqlite_instance.remove_seeds_from_memory_async(dataset_name="ds", **{empty_filter: []})
+    assert removed == 0
+    assert len(await sqlite_instance.get_seeds_async(dataset_name="ds")) == 3
+
+
+@pytest.mark.parametrize("empty_filter", ["prompt_group_ids", "value_sha256"])
+async def test_remove_seeds_only_empty_id_list_matches_nothing(sqlite_instance: MemoryInterface, empty_filter: str):
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="prompt1", dataset_name="ds", data_type="text")], added_by="test"
+    )
+
+    removed = await sqlite_instance.remove_seeds_from_memory_async(**{empty_filter: []})
+    assert removed == 0
+    assert len(await sqlite_instance.get_seeds_async()) == 1
+
+
 async def test_remove_seeds_no_filter_raises_value_error(sqlite_instance: MemoryInterface):
     seed_prompts = [
         SeedPrompt(value="prompt1", dataset_name="ds1", data_type="text"),
@@ -478,6 +503,19 @@ async def test_remove_seed_groups_skips_ungrouped_seeds(sqlite_instance: MemoryI
     removed = await sqlite_instance.remove_seed_groups_from_memory_async(dataset_name="ds1")
     assert removed == 0
     assert len(await sqlite_instance.get_seeds_async()) == 1
+
+
+@pytest.mark.parametrize("empty_filter", ["prompt_group_ids", "value_sha256"])
+async def test_remove_seed_groups_empty_id_list_matches_nothing(sqlite_instance: MemoryInterface, empty_filter: str):
+    groups = [
+        SeedGroup(seeds=[SeedPrompt(value=f"prompt{i}", dataset_name="ds", data_type="text", sequence=0)])
+        for i in range(3)
+    ]
+    await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=groups, added_by="test")
+
+    removed = await sqlite_instance.remove_seed_groups_from_memory_async(dataset_name="ds", **{empty_filter: []})
+    assert removed == 0
+    assert len(await sqlite_instance.get_seeds_async(dataset_name="ds")) == 3
 
 
 async def test_remove_seed_groups_no_filter_raises_value_error(sqlite_instance: MemoryInterface):

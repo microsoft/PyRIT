@@ -1843,6 +1843,17 @@ async def test_get_seeds_by_hash(sqlite_instance: MemoryInterface):
     assert retrieved_entries[0].value_sha256 == hello_1_hash
 
 
+@pytest.mark.parametrize("empty_filter", ["prompt_group_ids", "value_sha256"])
+async def test_get_seeds_empty_id_list_matches_nothing(sqlite_instance: MemoryInterface, empty_filter: str):
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="Hello 1", dataset_name="ds", data_type="text")], added_by="test"
+    )
+
+    # Like get_message_pieces(prompt_ids=[]), an empty id list selects nothing; None still means no filter.
+    assert await sqlite_instance.get_seeds_async(dataset_name="ds", **{empty_filter: []}) == []
+    assert len(await sqlite_instance.get_seeds_async(dataset_name="ds", **{empty_filter: None})) == 1
+
+
 async def test_add_seed_prompts_no_serialization_for_text(sqlite_instance: MemoryInterface):
     """Test that text prompts don't go through serialization"""
     text_prompt = SeedPrompt(value="Simple text prompt", dataset_name="test_dataset", data_type="text")
