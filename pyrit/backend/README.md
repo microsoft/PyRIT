@@ -199,6 +199,36 @@ PUT /api/targets/my-claude/credentials
 - Like other targets created through the API, private targets are gone after the backend
   restarts or reinitializes.
 
+### Exact dataset example selection
+
+Dataset browse summaries include a `fingerprint`. For configured scenario estimates
+and launches, send the selected browse references as `example_selection`:
+
+```json
+{"example_selection":{"examples":[
+  {"selection_key":"dataset:named:my_dataset",
+   "example_id":"00000000-0000-0000-0000-000000000001",
+   "fingerprint":"<64-character lowercase SHA-256 from the browse response>"}
+]}}
+```
+
+Selections are dataset-scoped and limited to 100 examples. They replace the
+scenario's default population without caps or resampling; named sources, filters,
+limits, and fetch overrides cannot be combined with them. Estimates inspect stored
+records without loading legacy prompt templates. Launch preserves objective
+conditions and decomposition relationships, prompt fields, and technique flags.
+Unsupported scenarios, group shapes, or techniques that would drop selected content
+return 400. `foundry.assert_policy` currently rejects REST exact selections because
+its tester and baseline policies can skip selected groups; use named datasets instead.
+Changed content or membership returns 409 from preview, estimate, and launch;
+oversized lists return 422. Selection errors are RFC 7807 problems that carry the
+stable `code` (`invalid_key`, `duplicate`, `missing`, `stale`, `conflicting_mode`,
+or `unsupported`) and, when one reference is at fault, its `selection_key` and
+`example_id` as fields, so clients branch on `code` instead of parsing `detail`. Resume keeps the saved selection and rejects a different
+one, then runs the seed groups stored with the run without reading the selected
+examples again, so editing or deleting a selected row after launch doesn't stop it.
+Omit `example_selection` to retain named-dataset behavior.
+
 ### Converters and scorers
 
 - `POST /api/converters` - Create a converter

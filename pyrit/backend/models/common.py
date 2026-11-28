@@ -9,6 +9,7 @@ Includes pagination, error handling (RFC 7807), shared base models, and request 
 
 from collections.abc import Mapping
 from typing import Annotated, Any, Self, cast
+from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 from pydantic.main import IncEx
@@ -165,6 +166,19 @@ class ProblemDetail(BaseModel):
     detail: str = Field(..., description="Human-readable explanation")
     instance: str | None = Field(None, description="URI of the specific occurrence")
     errors: list[FieldError] | None = Field(None, description="Field-level errors for validation")
+
+
+class DatasetExampleSelectionProblemDetail(ProblemDetail):
+    """A problem response for an exact dataset example selection that cannot be resolved."""
+
+    code: str = Field(
+        ...,
+        description=(
+            "Stable selection error code: invalid_key, duplicate, missing, stale, conflicting_mode, or unsupported"
+        ),
+    )
+    selection_key: str | None = Field(None, description="Browse key of the offending reference, when there is one")
+    example_id: UUID | None = Field(None, description="Example id of the offending reference, when there is one")
 
 
 class NotSaveableProblemDetail(ProblemDetail):

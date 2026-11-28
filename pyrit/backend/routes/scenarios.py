@@ -27,6 +27,7 @@ from pyrit.analytics import (
 )
 from pyrit.backend.models import (
     ConversationMessagesResponse,
+    DatasetExampleSelectionProblemDetail,
     DatasetListResponse,
     ListRegisteredScenariosResponse,
     ProblemDetail,
@@ -42,6 +43,7 @@ from pyrit.backend.services.scenario_run_service import (
     ScenarioRunNotFoundError,
 )
 from pyrit.models import (
+    DatasetExampleSelectionError,
     ScenarioHierarchyNode,
     ScenarioHierarchyProjection,
     ScenarioQueueSnapshot,
@@ -205,6 +207,10 @@ async def get_scenario(scenario_name: IdentifierStr) -> RegisteredScenario:  # p
     responses={
         400: {"model": ProblemDetail, "description": "Invalid estimate configuration"},
         404: {"model": ProblemDetail, "description": "Scenario not found"},
+        409: {
+            "model": DatasetExampleSelectionProblemDetail,
+            "description": "Selected example changed since it was read",
+        },
     },
 )
 async def estimate_scenario_run_size(  # pyrit-async-suffix-exempt
@@ -228,6 +234,9 @@ async def estimate_scenario_run_size(  # pyrit-async-suffix-exempt
             scenario_name=scenario_name,
             request=request,
         )
+    except DatasetExampleSelectionError:
+        # The app-level handler returns the RFC 7807 problem with the selection error's code.
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
     if estimate is None:
@@ -257,6 +266,9 @@ async def load_scenario_datasets_async(
     """
     try:
         result = await get_scenario_service().load_datasets_async(scenario_name=scenario_name, request=request)
+    except DatasetExampleSelectionError:
+        # The app-level handler returns the RFC 7807 problem with the selection error's code.
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
     if result is None:
@@ -309,6 +321,9 @@ async def start_scenario_run(  # pyrit-async-suffix-exempt
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from None
     except ScenarioRunConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
+    except DatasetExampleSelectionError:
+        # The app-level handler returns the RFC 7807 problem with the selection error's code.
+        raise
     except LookupError as e:
         raise FileNotFoundError(str(e)) from e
     except ValueError as e:
@@ -338,6 +353,9 @@ async def resume_scenario_run_async(*, scenario_result_id: IdentifierStr) -> Sce
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from None
     except ScenarioRunConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
+    except DatasetExampleSelectionError:
+        # The app-level handler returns the RFC 7807 problem with the selection error's code.
+        raise
     except LookupError as e:
         raise FileNotFoundError(str(e)) from e
     except ValueError as e:

@@ -399,6 +399,7 @@ class Psychosocial(Scenario):
     """
 
     VERSION: int = 7
+    SUPPORTS_EXACT_EXAMPLE_SELECTION = False
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     def _validate_dataset_scorer_requirements(self) -> None:

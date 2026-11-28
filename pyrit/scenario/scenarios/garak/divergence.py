@@ -96,6 +96,7 @@ class Divergence(Scenario):
     """
 
     VERSION: int = 1
+    SUPPORTS_EXACT_EXAMPLE_SELECTION = False
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
     _REPEAT_FACTORY: ClassVar[AttackTechniqueFactory] = AttackTechniqueFactory(
         name="repeat",

@@ -291,6 +291,9 @@ class AggregationLeakage(Scenario):
         """
         Require an explicitly selected case and confirmation of external target isolation.
 
+        A new run also checks the unsampled population, so sampling cannot hide other cases.
+        A resumed run checks the one case stored with it and doesn't read the population again.
+
         Raises:
             ValueError: If isolation is unconfirmed or the population is not one inline case.
         """
@@ -301,6 +304,8 @@ class AggregationLeakage(Scenario):
                 "include_context=False requires exactly one inline seed group. Provision an isolated target "
                 "with that case's documents and policy; do not combine positive and control evidence."
             )
+        if context.stored_run_plan is not None:
+            return
         population = await context.dataset_config.get_attack_seed_groups_async(apply_sampling=False)
         if len(population) != 1:
             raise ValueError("include_context=False requires exactly one inline seed group before sampling.")

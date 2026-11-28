@@ -17,6 +17,12 @@ from unit.assert_mocks import make_assert_config, make_assert_result, make_asser
 from unit.mocks import MockPromptTarget
 
 from pyrit.analytics import compute_assert_policy_metrics_async, compute_scenario_statistics
+from pyrit.backend.services import ScenarioService
+from pyrit.backend.services.dataset_example_fingerprint import dataset_example_fingerprint
+from pyrit.backend.services.dataset_example_selection import (
+    exact_example_dataset_configuration,
+    resolve_dataset_example_selection_async,
+)
 from pyrit.converter import Base64Converter, TranslationConverter
 from pyrit.datasets import AssertProvider
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack, TreeOfAttacksWithPruningAttack
@@ -30,16 +36,21 @@ from pyrit.models import (
     AssertSkipReason,
     AssertTaxonomy,
     AttackOutcome,
+    DatasetExampleReference,
+    DatasetExampleSelection,
+    DatasetExampleSelectionError,
     Message,
     PromptResponseError,
     ScenarioEvaluationIdentifier,
+    ScenarioRunSizeEstimateRequest,
     SeedObjective,
     ViolatesAssertPolicy,
     construct_response_from_request,
 )
+from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.scenario_readiness import ScenarioConfigurationError
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry
+from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, ScorerRegistry
 from pyrit.scenario import (
     AttackTechniqueFactory,
     BaselineAttackPolicy,
@@ -291,6 +302,54 @@ async def test_group_without_assert_metadata_names_the_dataset_async(harness: _H
     )
     with pytest.raises(ValueError, match="Dataset 'plain'.*ASSERT generation metadata"):
         await harness.initialize_async(harness.scenario(), **_datasets("plain"))
+
+
+async def test_exact_stored_group_uses_the_shared_resolution_seam_async(harness: _Harness) -> None:
+    await _store_async(name="assert_exact", result=_result(include_adversarial_prompt=False, group_count=1))
+    memory = CentralMemory.get_memory_instance()
+    seeds = await memory.get_seeds_async(dataset_name="assert_exact")
+    group_id = seeds[0].prompt_group_id
+    assert group_id is not None
+    members = await memory.get_seed_example_async(dataset_name="assert_exact", example_id=group_id)
+    key = "dataset:named:assert_exact"
+    selection = DatasetExampleSelection(
+        examples=[
+            DatasetExampleReference(
+                selection_key=key,
+                example_id=group_id,
+                fingerprint=dataset_example_fingerprint(selection_key=key, example_id=group_id, members=members),
+            )
+        ]
+    )
+    scorer = SubStringScorer(substring="expected")
+    scorers = ScorerRegistry()
+    scorers.instances.register(scorer, name="exact_assert")
+    request = ScenarioRunSizeEstimateRequest(
+        techniques=["prompt_sending"],
+        include_baseline=False,
+        example_selection=selection,
+        objective_scorer=RegisteredComponentReference(
+            registry_name="exact_assert", identifier_hash=scorer.get_identifier().hash
+        ),
+    )
+    with (
+        patch.object(ScorerRegistry, "get_registry_singleton", return_value=scorers),
+        pytest.raises(DatasetExampleSelectionError, match="unsupported"),
+    ):
+        await ScenarioService().estimate_scenario_run_size_async(scenario_name="foundry.assert_policy", request=request)
+    config = exact_example_dataset_configuration(
+        await resolve_dataset_example_selection_async(selection=selection, memory=memory)
+    )
+    scenario = AssertPolicy(objective_scorer=scorer, adversarial_chat=harness.adversarial)
+    scenario.set_params_from_args(args={"dataset_config": config, **_prompt_case()})
+    estimate = await scenario.get_run_size_estimate_async()
+    assert estimate.total_attack_count == 1
+    await harness.initialize_async(scenario, dataset_config=config, **_prompt_case())
+    (attack,) = scenario._atomic_attacks
+    (group,) = attack.seed_groups
+    assert group.objective.id == next(member.id for member in members if member.seed_type == "objective")
+    assert len(group.seeds) == len(members)
+    assert scenario._objective_scorer is scorer
 
 
 async def test_each_unit_passes_its_group_policy_to_the_default_judge_async(harness: _Harness) -> None:
