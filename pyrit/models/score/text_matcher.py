@@ -30,7 +30,7 @@ class Contains(_TextMatcher):
 
 
 class StartsWith(_TextMatcher):
-    """Compare a literal prefix, optionally stripping candidate whitespace and ignoring case."""
+    """Compare a literal prefix, optionally stripping surrounding whitespace and ignoring case."""
 
     matcher_type: Literal["starts_with"] = "starts_with"
 

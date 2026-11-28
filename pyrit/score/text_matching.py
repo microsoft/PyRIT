@@ -27,10 +27,12 @@ def match_text(*, matcher: TextMatcher, text: str) -> bool:
     if isinstance(matcher, Regex):
         return re.search(matcher.value, candidate, flags=0 if matcher.case_sensitive else re.IGNORECASE) is not None
     if isinstance(matcher, StartsWith):
+        # ignore_whitespace strips the expected value too, matching Equals:
+        # a value with incidental leading whitespace could otherwise never
+        # be a prefix of the stripped candidate.
+        expected = matcher.value.strip() if matcher.ignore_whitespace else matcher.value
         return (
-            candidate.startswith(matcher.value)
-            if matcher.case_sensitive
-            else candidate.lower().startswith(matcher.value.lower())
+            candidate.startswith(expected) if matcher.case_sensitive else candidate.lower().startswith(expected.lower())
         )
     if isinstance(matcher, Equals):
         expected = matcher.value.strip() if matcher.ignore_whitespace else matcher.value
