@@ -22,7 +22,7 @@ from pyrit.executor.attack import (
     CrescendoAttackContext,
     CrescendoAttackResult,
 )
-from pyrit.memory import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     JSON_SCHEMA_METADATA_KEY,
     AttackOutcome,
@@ -609,12 +609,47 @@ class TestContextValidation:
         next_message = Message.from_prompt(prompt="Continue conversation", role="user")
 
         # Should raise RuntimeError wrapping ValueError because prepended turns (2) exceed max_turns (1)
-        with pytest.raises(RuntimeError, match="exceeding max_turns"):
+        with pytest.raises(RuntimeError, match="exceeds max_turns"):
             await attack.execute_async(
                 objective="Test objective",
                 prepended_conversation=prepended,
                 next_message=next_message,
             )
+
+    async def test_prepended_conversation_using_every_turn_is_rejected_async(
+        self,
+        *,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+    ) -> None:
+        """Test that a prepended conversation with exactly max_turns turns is rejected (issue #4472)."""
+        adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
+
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=adversarial_config,
+            max_turns=2,  # Equal to prepended turns (2)
+        )
+
+        # Create prepended conversation with 2 assistant messages
+        prepended = [
+            Message.from_prompt(prompt="Hello", role="user"),
+            Message.from_prompt(prompt="Hi there!", role="assistant"),
+            Message.from_prompt(prompt="How are you?", role="user"),
+            Message.from_prompt(prompt="I'm fine!", role="assistant"),
+        ]
+        next_message = Message.from_prompt(prompt="Continue conversation", role="user")
+
+        # No turn is left to send, so the attack must fail loudly instead of reporting FAILURE
+        with pytest.raises(RuntimeError, match="equals or exceeds max_turns=2"):
+            await attack.execute_async(
+                objective="Test objective",
+                prepended_conversation=prepended,
+                next_message=next_message,
+            )
+
+        # The check runs before the prepended messages are converted, so none of them reach memory
+        assert await CentralMemory.get_memory_instance().get_message_pieces_async() == []
 
 
 @pytest.mark.usefixtures("patch_central_database")
