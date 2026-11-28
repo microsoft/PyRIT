@@ -39,6 +39,7 @@ import ScannerVisibilityLabel from './ScannerVisibilityLabel'
 import { useScenarioPresetLibraryStyles } from './ScenarioPresetLibrary.styles'
 import { NEW_PRESET_ROUTE, presetEditorRoutePath } from './presetRoutes'
 import { estimatePresetRunSizes, retainPresetRunSizes } from './presetRunSizes'
+import { fluentRef } from '@/utils/fluentRef'
 
 const DEFINED_IN_CODE_HINT = 'Defined in code, so it cannot be edited or deleted here.'
 
@@ -232,11 +233,11 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
         </div>
         <div className={styles.headerActions}>
           <Button
-            ref={newPresetButton}
+            ref={fluentRef(newPresetButton)}
             className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
-            onClick={() => navigate(NEW_PRESET_ROUTE)}
+            onClick={() => { void navigate(NEW_PRESET_ROUTE) }}
             data-testid="new-preset-btn"
           >
             New preset
@@ -374,7 +375,7 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
                           icon={<EditRegular />}
                           disabled={!editable}
                           title={editable ? undefined : DEFINED_IN_CODE_HINT}
-                          onClick={() => navigate(presetEditorRoutePath(item.preset.name))}
+                          onClick={() => { void navigate(presetEditorRoutePath(item.preset.name)) }}
                           data-testid={`edit-preset-${item.preset.name}`}
                         >
                           Edit
@@ -426,7 +427,7 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
                 </Button>
                 <Button
                   appearance="primary"
-                  onClick={handleDelete}
+                  onClick={() => { void handleDelete() }}
                   disabled={deleting}
                   data-testid="confirm-delete-preset"
                 >

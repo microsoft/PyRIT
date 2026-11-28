@@ -237,6 +237,103 @@ describe('ScenarioRunPage', () => {
     view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     expect(screen.queryByRole('heading', { name: 'ASSERT policy metrics' })).not.toBeInTheDocument()
   })
+
+  it.each([false, true])(
+    'shows baseline and every technique in one category with server totals, not visible row counts (hierarchy ready: %s)',
+    async (saved: boolean) => {
+      const user = userEvent.setup()
+      const definitions = [
+        { id: 'baseline-group', name: 'baseline', label: 'Baseline', kind: 'baseline' as const, technique: null },
+        { id: 'assert-group', name: 'assert_package', label: 'assert_package', kind: 'attack' as const, technique: 'assert_package' },
+        { id: 'role-group', name: 'role_play_movie_script', label: 'role_play_movie_script', kind: 'attack' as const, technique: 'role_play_movie_script' },
+      ]
+      const atomicGroups = definitions.map((definition) => ({
+        ...PLAN.atomic_groups[0], id: definition.id, kind: definition.kind, technique_name: definition.technique,
+        atomic_attack_name: `${definition.name}__case_hash`, display_group: 'cross_turn_policy_drift',
+      }))
+      const results = atomicGroups.map((group, index) => ({
+        ...ATTEMPT, attack_result_id: `attempt-${index}`, atomic_group_id: group.id,
+        atomic_attack_name: group.atomic_attack_name,
+      }))
+      const counts = { ...COUNTS, completed: 12, planned: 15, succeeded: 6, success_percentage: 50 }
+      if (saved) {
+        jest.mocked(scenariosApi.getRunHierarchy).mockResolvedValueOnce({
+          scenario_result_id: RUN_ID, scenario_name: 'AssertPolicy', scenario_version: 2, status: 'COMPLETED',
+          groups: atomicGroups.map((group, index) => ({
+            atomic_group_id: group.id, atomic_attack_name: group.atomic_attack_name, display_group: group.display_group,
+            counts: COUNTS,
+            roots: [{
+              ...results[index], objective: 'First objective', result_role: 'target_facing', executed_turns: 1,
+              retries_truncated: false, child_attack_result_ids: [], child_references_truncated: false,
+              children: [], children_truncated: false, child_offset: 0, unresolved_child_attack_result_ids: [],
+              unresolved_child_references_truncated: false, conversations: [], conversations_truncated: false,
+            }],
+          })),
+          overall_counts: counts, truncated: false, has_more: false, next_cursor: null,
+        })
+      }
+      state = makeState({
+        run: { ...RUN, status: 'COMPLETED', scenario_registry_name: 'foundry.assert_policy', scenario_name: 'AssertPolicy' },
+        plan: { ...PLAN, atomic_groups: atomicGroups },
+        summary: { ...SUMMARY, display_groups: [{
+          ...counts, id: 'category', display_group: 'cross_turn_policy_drift',
+          atomic_attack_names: atomicGroups.map((group) => group.atomic_attack_name),
+          atomic_group_ids: atomicGroups.map((group) => group.id),
+        }] },
+        results,
+      })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      const table = await screen.findByRole('table', { name: 'cross_turn_policy_drift attack results' })
+      if (saved) await waitFor(() => expect(screen.queryByText(/Loading result relationships/)).not.toBeInTheDocument())
+      expect(screen.getAllByRole('button', { name: /Collapse attacks in / })).toHaveLength(1)
+      expect(screen.getByText('Baseline, assert_package, role_play_movie_script', { exact: true })).toBeVisible()
+      expect(within(table).getAllByRole('row')).toHaveLength(4)
+      for (const definition of definitions) {
+        expect(within(table).getByText(definition.label, { exact: true })).toBeVisible()
+      }
+      expect(within(table).queryByText(/__case_hash/)).not.toBeInTheDocument()
+      expect(screen.getByText('12/15', { exact: true })).toBeVisible()
+
+      await user.click(within(table).getByRole('row', { name: 'View attack details for baseline__case_hash: First objective' }))
+      const details = within(await screen.findByRole('dialog'))
+      expect(details.getByText('Baseline', { exact: true })).toBeInTheDocument()
+      expect(details.queryByText('cross_turn_policy_drift')).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Close attack details' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+      await user.click(screen.getByRole('button', { name: 'First objective' }))
+      const dialog = within(await screen.findByRole('dialog'))
+      for (const definition of definitions) {
+        expect(dialog.getByText(definition.label, { exact: true })).toBeInTheDocument()
+      }
+      expect(dialog.queryByText(/__case_hash/)).not.toBeInTheDocument()
+    },
+  )
+
+  it.each([true, false])('lists a group\'s techniques, or its atomic attack names without a saved plan (plan: %s)', (withPlan: boolean) => {
+    const baseline = {
+      ...PLAN.atomic_groups[0], id: 'baseline-group', atomic_attack_name: 'baseline__case', kind: 'baseline' as const,
+      technique_name: null,
+    }
+    state = makeState({
+      plan: withPlan ? { ...PLAN, atomic_groups: [baseline, ...PLAN.atomic_groups] } : null,
+      summary: { ...SUMMARY, techniques: [{
+        ...SUMMARY.techniques[0], atomic_attack_names: ['PromptSendingAttack', 'baseline__case'],
+        atomic_group_ids: ['baseline-group', 'group'],
+      }] },
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByText(withPlan ? 'Baseline, direct' : 'PromptSendingAttack, baseline__case', { exact: true })).toBeVisible()
+  })
+
+  it('does not repeat a group name as its only technique', async () => {
+    const user = userEvent.setup()
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await user.click(screen.getByRole('button', { name: 'Collapse attacks in Direct' }))
+    expect(screen.getByText('Direct', { exact: true })).toBeVisible()
+    expect(screen.queryByText('direct', { exact: true })).not.toBeInTheDocument()
+  })
+
   it('preserves per-group expansion through polling and completion without collapse text', async () => {
     const user = userEvent.setup()
     const view = render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
@@ -425,7 +522,7 @@ describe('ScenarioRunPage', () => {
     await waitFor(() => expect(objective).toHaveFocus())
   })
 
-  it('restores focus to the attack row when attack details are dismissed with Escape', async () => {
+  it('restores focus to the attack row after Escape and on reopening', async () => {
     const user = userEvent.setup()
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     await expand(user)
@@ -433,6 +530,12 @@ describe('ScenarioRunPage', () => {
     await user.click(details)
     await screen.findByRole('dialog')
     await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(details).toHaveFocus())
+    await user.click(details)
+    await screen.findByRole('dialog')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     await waitFor(() => expect(details).toHaveFocus())
   })
 

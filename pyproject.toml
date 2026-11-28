@@ -32,8 +32,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
 ]
-requires-python = ">=3.11, <3.15"
+requires-python = ">=3.11, <3.16"
 dependencies = [
     "aiofiles>=24,<26",
     "aiohttp>=3.13.4",
@@ -318,29 +319,6 @@ unsound-assignment = "ignore"
 # assignments in this file are not checked by the rule either.
 [[tool.ty.overrides]]
 include = ["pyrit/memory/memory_models.py"]
-[tool.ty.overrides.rules]
-unsound-assignment = "ignore"
-
-# TEMPORARY: files with unsound-assignment findings still to fix, tracked in
-# https://github.com/microsoft/PyRIT/issues/4402 (chunks UA-1 to UA-7). Each chunk's PR
-# fixes its findings and removes its files from this list; the PR that empties the list
-# deletes this override. Do not add files here: new code is checked by the rule.
-[[tool.ty.overrides]]
-include = [
-    "pyrit/executor/promptgen/gcg/attack/base/attack_manager.py",
-    "pyrit/executor/promptgen/gcg/attack/gcg/candidate_proposer.py",
-    "pyrit/executor/promptgen/gcg/attack/gcg/gcg_attack.py",
-    "pyrit/executor/promptgen/gcg/default_implementations.py",
-    "pyrit/models/harm_category.py",
-    "pyrit/models/messages/conversations.py",
-    "pyrit/models/parameter.py",
-    "pyrit/models/score/observation.py",
-    "pyrit/models/score/scorable.py",
-    "pyrit/registry/components/target_registry.py",
-    "pyrit/registry/registry_recipe_restore.py",
-    "pyrit/registry/registry_recipe_rules.py",
-    "pyrit/registry/registry_recipe_save.py",
-]
 [tool.ty.overrides.rules]
 unsound-assignment = "ignore"
 

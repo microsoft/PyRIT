@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from pathlib import Path
+from typing import assert_type
 
 import pytest
 
@@ -858,3 +859,16 @@ def test_from_csv_reads_metadata_comment_after_leading_comment_line(tmp_path):
     assert dataset.version == "2.5"
     assert len(dataset.entries) == 1
     assert dataset.entries[0].objective == "mentions C#"
+
+
+def test_from_csv_returns_subclass(tmp_path: Path) -> None:
+    """Self-typed from_csv returns the subclass it is called on (PyRIT #4504)."""
+
+    class _SubDataset(HumanLabeledDataset):
+        pass
+
+    csv_path = tmp_path / "text.csv"
+    csv_path.write_text("assistant_response,objective,human_score\nhello,00456,1\n")
+    dataset = _SubDataset.from_csv(csv_path=csv_path, metrics_type=MetricsType.OBJECTIVE, version="1.0")
+    assert_type(dataset, _SubDataset)
+    assert isinstance(dataset, _SubDataset)

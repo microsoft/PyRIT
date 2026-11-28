@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+from typing import assert_type
 
 import pytest
 
@@ -398,3 +399,15 @@ class TestExecutionContextFactory:
         ctx = get_execution_context()
         assert ctx is not None
         assert ctx.component_role == ComponentRole.OBJECTIVE_SCORER
+
+
+class _DerivedExecutionContextManager(ExecutionContextManager):
+    pass
+
+
+def test_execution_context_manager_enter_preserves_subclass_type() -> None:
+    manager = _DerivedExecutionContextManager(context=ExecutionContext(component_role=ComponentRole.OBJECTIVE_TARGET))
+
+    with manager as entered:
+        assert_type(entered, _DerivedExecutionContextManager)
+        assert entered is manager

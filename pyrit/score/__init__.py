@@ -68,6 +68,11 @@ if TYPE_CHECKING:
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
     from pyrit.score.observation.otlp_json_trace_client import OtlpJsonTraceClient
     from pyrit.score.observation.program_execution_source import ProgramExecutionSource
+    from pyrit.score.observation.provider_trace_resolver import (
+        MappingProviderTraceResolver,
+        ProviderTraceResolver,
+        SpanAttributeTraceResolver,
+    )
     from pyrit.score.observation.trace_client import InMemoryTraceClient, TraceAcquisitionError, TraceClient
     from pyrit.score.response_handler import (
         CallableResponseHandler,
@@ -101,6 +106,13 @@ if TYPE_CHECKING:
         get_all_harm_metrics,
         get_all_objective_metrics,
     )
+    from pyrit.score.scorer_evaluation.scorer_stability import (
+        PresentationEffect,
+        ScorerPresentation,
+        ScorerStabilityEvaluator,
+        ScorerStabilityMetrics,
+        compute_scorer_stability,
+    )
     from pyrit.score.scorer_info import get_scorer_info
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
     from pyrit.score.scorer_selection import (
@@ -121,6 +133,13 @@ if TYPE_CHECKING:
         get_assert_failure_criterion,
     )
     from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
+    from pyrit.score.true_false.cyberseceval_prompt_injection_parser import (
+        parse_cyberseceval_prompt_injection_response,
+    )
+    from pyrit.score.true_false.cyberseceval_prompt_injection_scorer import (
+        CyberSecEvalPromptInjectionScorer,
+        render_cyberseceval_prompt_injection_prompt,
+    )
     from pyrit.score.true_false.decision_matches_scorer import DecisionMatchesScorer
     from pyrit.score.true_false.decoding_scorer import DecodingScorer
     from pyrit.score.true_false.file_write_scorer import FileWriteScorer
@@ -237,6 +256,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ConversationScorer": "pyrit.score.conversation_scorer",
     "AgentThreatRulesScorer": "pyrit.score.true_false.regex.agent_threat_rules_scorer",
     "CredentialLeakScorer": "pyrit.score.true_false.regex.credential_leak_scorer",
+    "CyberSecEvalPromptInjectionScorer": "pyrit.score.true_false.cyberseceval_prompt_injection_scorer",
     "DecisionMatchesScorer": "pyrit.score.true_false.decision_matches_scorer",
     "DecisionScorer": "pyrit.score.float_scale.decision_scorer",
     "DecodingScorer": "pyrit.score.true_false.decoding_scorer",
@@ -265,6 +285,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "HumanLabeledEntry": "pyrit.score.scorer_evaluation.human_labeled_dataset",
     "InsecureCodeScorer": "pyrit.score.float_scale.insecure_code_scorer",
     "InMemoryTraceClient": "pyrit.score.observation.trace_client",
+    "MappingProviderTraceResolver": "pyrit.score.observation.provider_trace_resolver",
+    "ProviderTraceResolver": "pyrit.score.observation.provider_trace_resolver",
+    "SpanAttributeTraceResolver": "pyrit.score.observation.provider_trace_resolver",
     "InMemoryTraceExporter": "pyrit.score.observation.otel_span_exporter",
     "FileWriteScorer": "pyrit.score.true_false.file_write_scorer",
     "LocalFileSurfaceSource": "pyrit.score.observation.local_file_surface_source",
@@ -309,6 +332,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "OpenRedirectOutputScorer": "pyrit.score.true_false.regex.open_redirect_output_scorer",
     "PackageEcosystem": "pyrit.score.true_false.regex.package_hallucination_scorer",
     "PackageHallucinationScorer": "pyrit.score.true_false.regex.package_hallucination_scorer",
+    "parse_cyberseceval_prompt_injection_response": "pyrit.score.true_false.cyberseceval_prompt_injection_parser",
     "parse_harmbench_response": "pyrit.score.true_false.harmbench_parser",
     "parse_llamaguard_response": "pyrit.score.true_false.llamaguard_parser",
     "parse_shieldgemma_response": "pyrit.score.true_false.shieldgemma_parser",
@@ -322,6 +346,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "RegexScorer": "pyrit.score.true_false.regex.regex_scorer",
     "RegistryUpdateBehavior": "pyrit.score.scorer_evaluation.metrics_type",
     "render_category_system_prompt": "pyrit.score.true_false.self_ask_category_scorer",
+    "render_cyberseceval_prompt_injection_prompt": "pyrit.score.true_false.cyberseceval_prompt_injection_scorer",
     "render_harmbench_prompt": "pyrit.score.true_false.harmbench_scorer",
     "render_insecure_code_system_prompt": "pyrit.score.float_scale.insecure_code_scorer",
     "render_llamaguard_prompt": "pyrit.score.true_false.llamaguard_scorer",
@@ -354,6 +379,11 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ScorerEvaluator": "pyrit.score.scorer_evaluation.scorer_evaluator",
     "ScorerMetrics": "pyrit.score.scorer_evaluation.scorer_metrics",
     "ScorerMetricsWithIdentity": "pyrit.score.scorer_evaluation.scorer_metrics",
+    "ScorerPresentation": "pyrit.score.scorer_evaluation.scorer_stability",
+    "ScorerStabilityEvaluator": "pyrit.score.scorer_evaluation.scorer_stability",
+    "ScorerStabilityMetrics": "pyrit.score.scorer_evaluation.scorer_stability",
+    "PresentationEffect": "pyrit.score.scorer_evaluation.scorer_stability",
+    "compute_scorer_stability": "pyrit.score.scorer_evaluation.scorer_stability",
     "get_all_harm_metrics": "pyrit.score.scorer_evaluation.scorer_metrics_io",
     "get_all_objective_metrics": "pyrit.score.scorer_evaluation.scorer_metrics_io",
     "get_scorer_info": "pyrit.score.scorer_info",

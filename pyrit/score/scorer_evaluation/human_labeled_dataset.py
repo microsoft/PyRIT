@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, assert_never, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Self, assert_never, cast
 from uuid import uuid4
 
 import pandas as pd
@@ -233,7 +233,7 @@ class HumanLabeledDataset:
         version: str | None = None,
         harm_definition: str | None = None,
         harm_definition_version: str | None = None,
-    ) -> "HumanLabeledDataset":
+    ) -> Self:
         """
         Load a human-labeled dataset from a CSV file with standard column names.
 

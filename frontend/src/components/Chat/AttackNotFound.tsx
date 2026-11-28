@@ -3,10 +3,10 @@ import { useAttackNotFoundStyles } from './AttackNotFound.styles'
 
 interface AttackNotFoundProps {
   attackId: string
-  conversationId?: string | null
+  conversationId?: string | null | undefined
   onStartNew: () => void
   onBackToHistory: () => void
-  onViewAttack?: () => void
+  onViewAttack?: (() => void) | undefined
   /**
    * 'not-found' for a genuine attack 404;
    * 'error' for a transient attack load failure;

@@ -3,6 +3,7 @@
 
 import enum
 from pathlib import Path
+from typing import Self
 
 from pyrit.common.path import SCORER_SCALES_PATH
 from pyrit.models import (
@@ -144,7 +145,7 @@ class SelfAskScaleScorer(MessageFloatScaleScorer):
         system_prompt_template: SeedPrompt | str | None = None,
         response_handler: ResponseHandler | None = None,
         validator: ScorerPromptValidator | None = None,
-    ) -> "SelfAskScaleScorer":
+    ) -> Self:
         """
         Build a scorer whose prompt and normalization are driven by one ``NumericRubric``.
 

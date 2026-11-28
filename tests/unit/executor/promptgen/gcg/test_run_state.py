@@ -226,10 +226,8 @@ class TestMultiPromptRunStateTracking:
         # restores whatever suffix was active for optimization.
         assert attack.control_str == "best-yet"
         assert attack.log.call_count == 2
-        first_log_args = attack.log.call_args_list[0].args
-        assert first_log_args[2] == "better"
-        second_log_args = attack.log.call_args_list[1].args
-        assert second_log_args[2] == "best-yet"
+        assert attack.log.call_args_list[0].kwargs["control"] == "better"
+        assert attack.log.call_args_list[1].kwargs["control"] == "best-yet"
 
     def test_seeded_runs_produce_identical_trajectories(self) -> None:
         results = []
@@ -337,7 +335,9 @@ class TestProgressiveRunScheduleState:
         assert schedule.goals_admitted == 1
         assert schedule.workers_admitted == 1
         inner_attack.test_all.assert_called_once()
-        inner_attack.log.assert_called_once_with(2, 10, "ctrl", 0.5, 0.0, model_tests, verbose=True)
+        inner_attack.log.assert_called_once_with(
+            step_num=2, n_steps=10, control="ctrl", loss=0.5, runtime=0.0, model_tests=model_tests, verbose=True
+        )
 
     def test_schedule_exhaustion_continues_until_step_budget_spent(self) -> None:
         inner_attack = MagicMock()
