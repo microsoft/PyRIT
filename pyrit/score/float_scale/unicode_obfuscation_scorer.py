@@ -539,8 +539,12 @@ class UnicodeObfuscationScorer(MessageFloatScaleScorer):
                     and bool(prev_char)
                     and _is_emoji_variation_base(prev_char, next_char=next_char)
                 )
-                is_valid_cjk_ivs = 0xE0100 <= cp <= 0xE01EF and bool(prev_char) and _is_cjk_ideograph(prev_char)
-                if is_valid_emoji_vs or is_valid_cjk_ivs:
+                is_valid_cjk_vs = (
+                    (0xFE00 <= cp <= 0xFE0D or 0xE0100 <= cp <= 0xE01EF)
+                    and bool(prev_char)
+                    and _is_cjk_ideograph(prev_char)
+                )
+                if is_valid_emoji_vs or is_valid_cjk_vs:
                     continue
 
             suspicious_count += len(run_cps)
@@ -620,7 +624,9 @@ class UnicodeObfuscationScorer(MessageFloatScaleScorer):
                 if not (_is_rtl_script_char(prev_ch) or _is_rtl_script_char(next_ch)):
                     suspicious_marks += 1
             elif _is_rtl_script_char(ch) and isolate_has_rtl:
-                for scope_idx in range(len(isolate_has_rtl)):
+                for scope_idx in range(len(isolate_has_rtl) - 1, -1, -1):
+                    if isolate_has_rtl[scope_idx]:
+                        break
                     isolate_has_rtl[scope_idx] = True
 
         unclosed_isolates = len(embed_scopes) - 1
@@ -758,6 +764,8 @@ class UnicodeObfuscationScorer(MessageFloatScaleScorer):
                 continue
 
             homoglyph_chars = [ch for ch in token if ch in _HOMOGLYPH_TO_LATIN]
+            if not homoglyph_chars:
+                continue
             is_mixed_with_latin = "LATIN" in scripts
             is_all_confusable_in_latin_context = (
                 has_latin_context and len(token) >= 2 and len(homoglyph_chars) == sum(ch.isalpha() for ch in token)
@@ -766,11 +774,7 @@ class UnicodeObfuscationScorer(MessageFloatScaleScorer):
             if not (is_mixed_with_latin or is_all_confusable_in_latin_context):
                 continue
 
-            flagged_in_token = (
-                len(homoglyph_chars)
-                if homoglyph_chars
-                else sum(1 for ch in token if _char_script(ch) in confusable_scripts)
-            )
+            flagged_in_token = len(homoglyph_chars)
             suspicious_char_count += flagged_in_token
             suspicious_token_count += 1
             if len(skeleton_examples) < 5:

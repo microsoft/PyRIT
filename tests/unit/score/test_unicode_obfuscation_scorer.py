@@ -260,8 +260,10 @@ class TestUnicodeObfuscationFalsePositiveGuards:
             + "1"
             + VS16
             + chr(0x20E3),
-            # Legitimate single CJK Ideographic Variation Selector.
-            "Variant kanji: " + chr(0x8FBB) + chr(0xE0100),
+            # Legitimate single CJK variation selectors (both BMP standardized and supplementary IVS).
+            "Variant kanji: " + chr(0x8FBB) + chr(0xE0100) + " and " + chr(0x4E00) + chr(0xFE00),
+            # Non-confusable scientific/math Greek+Latin identifiers (Delta, lambda, pi) must not trigger homoglyphs.
+            "Formula: " + chr(0x0394) + "x + " + chr(0x03BB) + "_func * " + chr(0x03C0) + "_val",
             # Legitimate Persian ZWNJ and Devanagari ZWJ joiners.
             "Persian: "
             + chr(0x0645)
@@ -440,6 +442,14 @@ class TestUnicodeObfuscationAggregationAndContract:
 
         assert 0.8 <= score.get_value() <= 1.0
         assert score.score_metadata["suspicious_char_count"] == 200
+
+    async def test_deeply_nested_rtl_isolates_stay_linear(self) -> None:
+        # Deeply nested balanced RTL isolates must complete in linear time without stalling.
+        text = (RLI * 2000) + (chr(0x0645) * 2000) + (PDI * 2000)
+        score = await _score_async(UnicodeObfuscationScorer(), text)
+
+        assert score.get_value() == 0.0
+        assert score.score_metadata["unbalanced_bidi_count"] == 0
 
     async def test_non_text_input_rejected_by_validator(self) -> None:
         scorer = UnicodeObfuscationScorer()
