@@ -2578,7 +2578,7 @@ class Scenario(ABC):
                     and (eval_hash is None or isinstance(eval_hash, str))
                     and AttackResultMetadata.from_metadata(metadata=attribution).attempt_index is None
                 ):
-                    timestamp = row.timestamp.timestamp() if isinstance(row.timestamp, datetime) else 0.0
+                    timestamp = row.timestamp.timestamp()
                     objective_hash = to_sha256(row.objective) if row.objective else None
                     failure_rows.append(((name, eval_hash), objective_hash, timestamp))
 

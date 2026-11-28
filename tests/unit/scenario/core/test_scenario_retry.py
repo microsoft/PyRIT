@@ -956,6 +956,7 @@ class TestGetCompletedObjectiveHashesByAttack:
         row.objective = objective
         row.metadata = metadata if metadata is not None else {}
         row.outcome_reason = None
+        row.timestamp = datetime(2026, 11, 20, tzinfo=UTC)
         return row
 
     async def test_returns_empty_when_scenario_result_id_unset(self):
@@ -1115,6 +1116,7 @@ class TestRemainingAttackOrdering:
         failed_row.objective = "poison"
         failed_row.metadata = {}
         failed_row.outcome_reason = None
+        failed_row.timestamp = datetime(2026, 11, 20, tzinfo=UTC)
         scenario._memory.get_attack_results_async.return_value = [failed_row]
 
         remaining = await scenario._get_remaining_atomic_attacks_async()
@@ -1145,6 +1147,7 @@ class TestRemainingAttackOrdering:
             r.objective = objective
             r.metadata = {}
             r.outcome_reason = None
+            r.timestamp = datetime(2026, 11, 20, tzinfo=UTC)
             return r
 
         scenario._memory.get_attack_results_async.return_value = [
@@ -1170,6 +1173,7 @@ class TestRemainingAttackOrdering:
         row.objective = "poison"
         row.metadata = {}
         row.outcome_reason = None
+        row.timestamp = datetime(2026, 11, 20, tzinfo=UTC)
         return row
 
     async def test_completed_namesake_does_not_demote_surviving_duplicate(self):
