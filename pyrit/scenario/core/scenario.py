@@ -2525,9 +2525,9 @@ class Scenario(ABC):
 
     async def _get_attack_progress_async(
         self,
-    ) -> tuple[dict[tuple[str, str | None], set[str]], set[tuple[str, str | None]]]:
+    ) -> tuple[dict[tuple[str, str | None], set[str]], dict[tuple[str, str | None], float]]:
         """
-        Read completed objectives and started attacks from one result snapshot.
+        Read completed objectives and failed attacks from one result snapshot.
 
         Completed objectives are content-addressed by ``to_sha256(objective)``
         and keyed by ``(parent_collection, parent_eval_hash)`` so two atomic
@@ -2537,14 +2537,14 @@ class Scenario(ABC):
         fallback.
 
         ``ERROR`` rows and rows carrying an ``AttackPreparationFailure`` are not
-        completed, but they mark the attack as failed. Resume uses that set only
-        for ordering: attacks that never failed (untouched or merely interrupted)
-        go before attacks that already failed, so one failing objective cannot
-        starve the rest of the queue on every retry.
+        completed, but they mark the attack as failed. A failed attack's rank is
+        the timestamp of its latest still-pending failure: retries put the
+        earliest one first so a permanently failing attack cannot starve the
+        other failed attacks forever.
 
         Returns:
-            tuple: Completed objective hashes per attack key, and the set of
-                attack keys with a failed result. A missing eval hash is
+            tuple: Completed objective hashes and the latest still-pending
+                failure timestamp per attack key. A missing eval hash is
                 represented as ``None`` in both.
 
         Raises:
@@ -2553,13 +2553,13 @@ class Scenario(ABC):
                 objectives.
         """
         if not self._scenario_result_id:
-            return {}, set()
+            return {}, {}
 
         rows = await self._memory.get_attack_results_async(
             scenario_result_id=self._scenario_result_id, result_selection=AttackResultSelection.ALL_RESULTS
         )
         completed_by_attack: dict[tuple[str, str | None], set[str]] = {}
-        started_attack_keys: set[tuple[str, str | None]] = set()
+        failure_rows: list[tuple[tuple[str, str | None], str | None, float]] = []
         for row in rows:
             attribution = row.attribution_data
             name: Any = None
@@ -2578,7 +2578,9 @@ class Scenario(ABC):
                     and (eval_hash is None or isinstance(eval_hash, str))
                     and AttackResultMetadata.from_metadata(metadata=attribution).attempt_index is None
                 ):
-                    started_attack_keys.add((name, eval_hash))
+                    timestamp = row.timestamp.timestamp() if isinstance(row.timestamp, datetime) else 0.0
+                    objective_hash = to_sha256(row.objective) if row.objective else None
+                    failure_rows.append(((name, eval_hash), objective_hash, timestamp))
 
             # ERROR rows hit infrastructure problems, and preparation failures never reached the
             # objective target at all, so neither measured the objective and both stay pending.
@@ -2595,21 +2597,13 @@ class Scenario(ABC):
             if not isinstance(name, str) or (eval_hash is not None and not isinstance(eval_hash, str)):
                 continue
             completed_by_attack.setdefault((name, eval_hash), set()).add(to_sha256(row.objective))
-        return completed_by_attack, started_attack_keys
 
-    async def _get_completed_objective_hashes_by_attack_async(self) -> dict[tuple[str, str | None], set[str]]:
-        """
-        Return completed objective hashes keyed by attack identity.
-
-        Thin wrapper around [_get_attack_progress_async][pyrit.scenario.core.scenario.Scenario.
-        _get_attack_progress_async] for callers that only need completed work.
-
-        Returns:
-            dict[tuple[str, str | None], set[str]]: Completed objective hashes
-                keyed by collection name and technique eval hash.
-        """
-        completed_by_attack, _ = await self._get_attack_progress_async()
-        return completed_by_attack
+        failed_attack_keys: dict[tuple[str, str | None], float] = {}
+        for attack_key, objective_hash, timestamp in failure_rows:
+            if objective_hash is not None and objective_hash in completed_by_attack.get(attack_key, set()):
+                continue
+            failed_attack_keys[attack_key] = max(failed_attack_keys.get(attack_key, 0.0), timestamp)
+        return completed_by_attack, failed_attack_keys
 
     async def _get_remaining_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
@@ -2631,7 +2625,7 @@ class Scenario(ABC):
 
         remaining_attacks: list[AtomicAttack] = []
         # Read and index one snapshot before changing any attack's remaining work.
-        completed_by_attack, started_attack_keys = await self._get_attack_progress_async()
+        completed_by_attack, failed_attack_keys = await self._get_attack_progress_async()
 
         for atomic_attack in self._atomic_attacks:
             name = atomic_attack.atomic_attack_name
@@ -2658,24 +2652,24 @@ class Scenario(ABC):
 
         # A retry/resume otherwise re-queues the same partially failed attack first,
         # hits the same failing objective, and stops admission before the attacks
-        # behind it ever start. Put attacks with no failed result first; the sort
-        # is stable, so original order is kept within each group.
+        # behind it ever start. Attacks with no pending failure come first; failed
+        # attacks follow by their latest pending failure, oldest first, so repeated
+        # failures rotate instead of starving each other. The sort is stable, so
+        # original order is kept within each group.
         # A legacy failure row with no eval hash matches name-only. Only trust that fallback when
-        # the name is unique among remaining attacks; with two attacks sharing a name but using
-        # different techniques, a legacy row for one must not demote both.
-        # Count over all atomic attacks, not just the survivors: if one namesake
-        # completed, a legacy name-only failure must stay ambiguous for the
-        # other one instead of demoting an attack that never failed.
+        # the name is unique among all atomic attacks; with two attacks sharing a name but using
+        # different techniques, a legacy row for one must not demote both. Counting over all
+        # attacks also keeps the name ambiguous after one namesake completes.
         attack_name_counts = Counter(attack.atomic_attack_name for attack in self._atomic_attacks)
-        remaining_attacks.sort(
-            key=lambda attack: (
-                (attack.atomic_attack_name, attack.technique_eval_hash) in started_attack_keys
-                or (
-                    attack_name_counts[attack.atomic_attack_name] == 1
-                    and (attack.atomic_attack_name, None) in started_attack_keys
-                )
-            )
-        )
+
+        def failure_rank(attack: AtomicAttack) -> tuple[bool, float]:
+            attack_key = (attack.atomic_attack_name, attack.technique_eval_hash)
+            timestamp = failed_attack_keys.get(attack_key)
+            if timestamp is None and attack_name_counts[attack.atomic_attack_name] == 1:
+                timestamp = failed_attack_keys.get((attack.atomic_attack_name, None))
+            return timestamp is not None, timestamp or 0.0
+
+        remaining_attacks.sort(key=failure_rank)
         return remaining_attacks
 
     async def _resolve_seed_groups_by_dataset_async(
