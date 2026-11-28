@@ -18,6 +18,10 @@ class UnicodeConfusableConverter(Converter):
     """
     Applies substitutions to words in the prompt to test adversarial textual robustness
     by replacing characters with visually similar ones.
+
+    By default every character that has a look-alike is replaced. With a ``budget``, only that many
+    characters are replaced, at randomly chosen positions, matching the homoglyph perturbation from
+    Boucher et al., "Bad Characters: Imperceptible NLP Attacks" (arXiv:2106.09898).
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
@@ -34,6 +38,7 @@ class UnicodeConfusableConverter(Converter):
         *,
         source_package: Literal["confusable_homoglyphs", "confusables", "cyrillic_homoglyph"] = "confusable_homoglyphs",
         deterministic: bool = False,
+        budget: int | None = None,
     ) -> None:
         """
         Initialize the converter with the specified source package for homoglyph generation.
@@ -54,17 +59,23 @@ class UnicodeConfusableConverter(Converter):
                         Replaces Latin a, c, e, o, p, x, y (both cases) with their Cyrillic look-alikes
                         using a fixed table, so the output is always the same.
             deterministic (bool): This argument is for unittesting only.
+            budget (int | None): How many characters to replace. Each goes at a distinct position that has a
+                look-alike different from the original, chosen at random. If fewer positions qualify, all of
+                them are replaced. Defaults to None, which replaces every character that has a look-alike.
 
         Raises:
-            ValueError: If an invalid source package is provided.
+            ValueError: If an invalid source package is provided, or ``budget`` is not a positive integer.
         """
         if source_package not in ["confusable_homoglyphs", "confusables", "cyrillic_homoglyph"]:
             raise ValueError(
                 f"Invalid source package: {source_package}. Please choose 'confusable_homoglyphs', "
                 "'confusables', or 'cyrillic_homoglyph'"
             )
+        if budget is not None and (isinstance(budget, bool) or budget < 1):
+            raise ValueError(f"budget must be a positive integer or None, got {budget!r}")
         self._source_package: Literal["confusable_homoglyphs", "confusables", "cyrillic_homoglyph"] = source_package
         self._deterministic = deterministic
+        self._budget = budget
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -77,6 +88,7 @@ class UnicodeConfusableConverter(Converter):
             params={
                 "source_package": self._source_package,
                 "deterministic": self._deterministic,
+                "budget": self._budget,
             },
         )
 
@@ -98,7 +110,9 @@ class UnicodeConfusableConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        if self._source_package == "cyrillic_homoglyph":
+        if self._budget is not None:
+            converted_prompt = self._substitute_with_budget(prompt=prompt, budget=self._budget)
+        elif self._source_package == "cyrillic_homoglyph":
             converted_prompt = prompt.translate(self._CYRILLIC_HOMOGLYPHS)
         elif self._source_package == "confusable_homoglyphs":
             converted_prompt = self._generate_perturbed_prompts(prompt)
@@ -184,3 +198,44 @@ class UnicodeConfusableConverter(Converter):
         if self._deterministic or len(confusable_options) == 1:
             return str(confusable_options[-1])
         return str(self._get_random_generator(stream="confusables").choice(confusable_options))
+
+    def _substitute_with_budget(self, *, prompt: str, budget: int) -> str:
+        """
+        Replace up to ``budget`` randomly chosen characters with a look-alike from the selected source package.
+
+        Args:
+            prompt (str): The original prompt.
+            budget (int): The most characters to replace.
+
+        Returns:
+            str: The prompt with at most ``budget`` characters replaced.
+        """
+        candidates = {index: options for index, char in enumerate(prompt) if (options := self._substitutes(char))}
+        rng = self._get_random_generator(stream="budgeted-substitutions")
+        positions = rng.sample(sorted(candidates), min(budget, len(candidates)))
+
+        characters = list(prompt)
+        for index in sorted(positions):
+            options = candidates[index]
+            characters[index] = options[-1] if self._deterministic else rng.choice(options)
+        return "".join(characters)
+
+    def _substitutes(self, char: str) -> list[str]:
+        """
+        List the look-alikes for a character that differ from it, using the selected source package.
+
+        Args:
+            char (str): The character to find look-alikes for.
+
+        Returns:
+            list[str]: The look-alikes, or an empty list if the character has none.
+        """
+        if self._source_package == "cyrillic_homoglyph":
+            options = [char.translate(self._CYRILLIC_HOMOGLYPHS)]
+        elif self._source_package == "confusable_homoglyphs":
+            options = self._get_homoglyph_variants(char)
+        else:
+            if TYPE_CHECKING and self._source_package != "confusables":  # pragma: no cover
+                assert_never(self._source_package)
+            options = [] if char == " " else [str(option) for option in confusable_characters(char) or []]
+        return [option for option in dict.fromkeys(options) if option != char]
