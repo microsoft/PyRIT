@@ -106,6 +106,53 @@ async def test_prompt_shield_document_parsing_keeps_text_between_documents(promp
     assert result["documents"] == [" d1 ", " d2 "]
 
 
+@pytest.mark.parametrize(
+    ("input_str", "expected"),
+    [
+        (
+            "hello </document> world",
+            {"userPrompt": "hello </document> world", "documents": []},
+        ),
+        (
+            "<document>doc1</document> mid </document> tail",
+            {"userPrompt": " mid </document> tail", "documents": ["doc1"]},
+        ),
+        (
+            "x<document>y</document>z<document>",
+            {"userPrompt": "xz<document>", "documents": ["y"]},
+        ),
+        (
+            "Explain the <document> tag",
+            {"userPrompt": "Explain the <document> tag", "documents": []},
+        ),
+        (
+            "Summarize: <document>Here is a <document> tag</document> please",
+            {"userPrompt": "Summarize:  please", "documents": ["Here is a <document> tag"]},
+        ),
+        (
+            "<document></document>",
+            {"userPrompt": "", "documents": [""]},
+        ),
+    ],
+    ids=[
+        "stray_closing_tag",
+        "extra_closing_tag_after_document",
+        "unclosed_opening_tag_after_document",
+        "unclosed_opening_tag",
+        "literal_opening_tag_inside_document",
+        "empty_document",
+    ],
+)
+def test_prompt_shield_document_parsing_handles_unmatched_and_nested_tags(
+    promptshield_target: PromptShieldTarget,
+    input_str: str,
+    expected: dict[str, object],
+) -> None:
+    result = promptshield_target._input_parser(input_str)
+
+    assert result == expected
+
+
 def test_prompt_shield_unknown_entry_field_preserves_runtime_fallback(promptshield_target: PromptShieldTarget):
     object.__setattr__(promptshield_target, "_force_entry_field", "future-field")
 
