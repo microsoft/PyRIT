@@ -22,7 +22,6 @@ from pyrit.common.yaml_helper import safe_load_yaml
 
 if TYPE_CHECKING:
     from pathlib import Path
-    from typing import Self
 
 SHIELDGEMMA_DEFAULT_POLICY_PATH = (SCORER_SEED_PROMPT_PATH / "shieldgemma" / "shieldgemma_policy.yaml").resolve()
 
