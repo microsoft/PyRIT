@@ -155,9 +155,7 @@ function withoutMember(set: ReadonlySet<string>, member: string): ReadonlySet<st
 function withEntry<T>(record: Readonly<Record<string, T>>, key: string, value: T | undefined): Readonly<Record<string, T>> {
   if (value === undefined) {
     if (!(key in record)) return record
-    const next = { ...record }
-    delete next[key]
-    return next
+    return Object.fromEntries(Object.entries(record).filter(([entryKey]) => entryKey !== key))
   }
   return { ...record, [key]: value }
 }

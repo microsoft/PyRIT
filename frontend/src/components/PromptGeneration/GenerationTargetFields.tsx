@@ -53,9 +53,9 @@ export default function GenerationTargetFields({
               disabled={disabled}
               data-testid={`generation-target-${role.role}`}
               onChange={(_: ChangeEvent<HTMLSelectElement>, data: SelectOnChangeData) => {
-                const next = { ...value }
-                if (data.value) next[role.role] = data.value
-                else delete next[role.role]
+                const next = data.value
+                  ? { ...value, [role.role]: data.value }
+                  : Object.fromEntries(Object.entries(value).filter(([key]) => key !== role.role))
                 onChange(next)
               }}
             >

@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { Badge, Text, Tooltip } from '@fluentui/react-components'
 import type { TargetInstance } from '../../types'
 import { targetEndpoint, targetModelName, targetType, targetUnderlyingModelName } from '../../utils/targetIdentity'
+import { formatTargetParams } from '../../utils/targetParams'
 import { useTargetBadgeStyles } from './TargetBadge.styles'
 
 interface TargetBadgeProps {
@@ -20,21 +21,7 @@ const CAPABILITY_LABELS: Array<{ key: keyof NonNullable<TargetInstance['capabili
   { key: 'supports_system_prompt', label: 'System prompt' },
 ]
 
-function formatParams(params?: Record<string, unknown> | null): string {
-  if (!params) return ''
-  const lines: string[] = []
-  for (const [key, val] of Object.entries(params)) {
-    if (val == null) continue
-    if (key === 'extra_body_parameters' && typeof val === 'object') {
-      for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
-        lines.push(`${k}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`)
-      }
-    } else {
-      lines.push(`${key}: ${typeof val === 'object' ? JSON.stringify(val, null, 2) : String(val)}`)
-    }
-  }
-  return lines.join('\n')
-}
+const formatParams = (params?: Record<string, unknown> | null): string => formatTargetParams(params, 2)
 
 export default function TargetBadge({ target, picker, emptyLabel = 'No target selected' }: TargetBadgeProps) {
   const styles = useTargetBadgeStyles()

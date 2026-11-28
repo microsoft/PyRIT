@@ -296,7 +296,7 @@ export function usePieceConverters(
     })
   }, [])
 
-  const editInput = useCallback((pieceId: string, value: string): PieceConversionUpdates | void => {
+  const editInput = useCallback((pieceId: string, value: string): PieceConversionUpdates | undefined => {
     const update = (current: ConversionState): ConversionState => {
       const input = current.inputs.find((candidate: VersionedInput) => candidate.id === pieceId)
       if (!input || input.dataType !== 'text' || (current.workingInputs[pieceId] ?? input.value) === value) return current
@@ -321,7 +321,7 @@ export function usePieceConverters(
 
   const editStageOutput = useCallback((
     pieceId: string, stageId: string, value: string,
-  ): PieceConversionUpdates | void => {
+  ): PieceConversionUpdates | undefined => {
     const update = (current: ConversionState): ConversionState => {
       const stages = current.stageResults[pieceId] ?? []
       const index = stages.findIndex((stage: ConverterStageResult) => stage.stageId === stageId)
@@ -354,7 +354,7 @@ export function usePieceConverters(
     pieceId,
     afterStageId,
     includeIncomplete = false,
-  }: ConversionScope): Promise<PieceConversionUpdates | void> => {
+  }: ConversionScope): Promise<PieceConversionUpdates | undefined> => {
     if (state.activeRuns.length > 0 && state.activeRuns[state.activeRuns.length - 1] === state.runId) return
     const completed = completedResults(state)
     const selected = state.inputs.flatMap((input: VersionedInput): ConversionJob[] => {

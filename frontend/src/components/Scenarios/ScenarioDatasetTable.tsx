@@ -86,12 +86,11 @@ export default function ScenarioDatasetTable({
     return !metadata?.loaded && !metadata?.provider_available && !settingsFor(source.name)?.configured_provider
   })
   const updateDraft = (key: string, text: string | null): void => {
-    setDrafts((previous) => {
-      const next = { ...previous }
-      if (text === null) delete next[key]
-      else next[key] = text
-      return next
-    })
+    setDrafts((previous) => (
+      text === null
+        ? Object.fromEntries(Object.entries(previous).filter(([entryKey]) => entryKey !== key))
+        : { ...previous, [key]: text }
+    ))
   }
   const clearSourceDrafts = (name?: string): void => {
     setDrafts((previous) => Object.fromEntries(Object.entries(previous).filter(([key]) =>
@@ -112,11 +111,11 @@ export default function ScenarioDatasetTable({
       return
     }
     setEmptySelections((previous) => previous.filter((item) => item !== key))
-    const edits = { ...request.filters }
     const allSelected = (availableMetadata[key] ?? []).every((item) => next.includes(item))
       && next.every((item) => (availableMetadata[key] ?? []).includes(item))
-    if (allSelected && !(defaults.filters[key]?.length)) delete edits[key]
-    else edits[key] = allSelected ? [] : next
+    const edits = (allSelected && !(defaults.filters[key]?.length))
+      ? Object.fromEntries(Object.entries(request.filters ?? {}).filter(([filterKey]) => filterKey !== key))
+      : { ...request.filters, [key]: allSelected ? [] : next }
     const result = { ...request }
     if (Object.keys(edits).length > 0) result.filters = edits
     else delete result.filters

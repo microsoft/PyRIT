@@ -444,7 +444,7 @@ export default function CreateConverterDialog({
           }
         }
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         if (!cancelled) {
           setConverterTypes([])
           setTargets([])
@@ -576,7 +576,7 @@ export default function CreateConverterDialog({
     reader.onload = () => {
       if (!isCurrentSelection()) return
       fileReads.current.delete(parameterName)
-      const value = String(reader.result ?? '')
+      const value = typeof reader.result === 'string' ? reader.result : ''
       onReadSuccess?.()
       setError((current) => current?.fileReadParameter === parameterName ? null : current)
       setChangedParameters((current) => new Set([...current, parameterName]))
@@ -856,11 +856,9 @@ export default function CreateConverterDialog({
                           onChange={(value) => {
                             fileReads.current.delete(parameter.name)
                             setFileNotice(null)
-                            setSelectedFiles((current) => {
-                              const next = { ...current }
-                              delete next[parameter.name]
-                              return next
-                            })
+                            setSelectedFiles((current) =>
+                              Object.fromEntries(Object.entries(current).filter(([key]) => key !== parameter.name)),
+                            )
                             setChangedParameters((current) => new Set([...current, parameter.name]))
                             setParameterValues((current) => ({ ...current, [parameter.name]: value }))
                           }}

@@ -432,11 +432,9 @@ export default function MessageList({
     if (activeDownloads.current.has(downloadKey)) return
     activeDownloads.current.add(downloadKey)
     setPendingDownloads(new Set(activeDownloads.current))
-    setDownloadErrors((current) => {
-      const next = { ...current }
-      delete next[downloadKey]
-      return next
-    })
+    setDownloadErrors((current) =>
+      Object.fromEntries(Object.entries(current).filter(([key]) => key !== downloadKey)),
+    )
 
     try {
       // Convert the URL (data URI or same-origin) to a Blob, then create

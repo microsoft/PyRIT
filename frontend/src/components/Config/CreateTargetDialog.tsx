@@ -589,15 +589,15 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const buildFormParams = (): { ok: true, params: Record<string, unknown> } | { ok: false, error: string } => {
     const metadataParams = buildParametersFromForm(metadataDrivenParameters, parameterValues)
     if (!metadataParams.ok) return metadataParams
-    const params: Record<string, unknown> = { ...(metadataParams.parameters ?? {}) }
     // Identity-based auth must be enforceable: strip any metadata-driven
     // parameter (e.g. AzureBlobStorageTarget's sas_token) that would let the
     // backend authenticate a different way than the selected identity.
-    if (isIdentity) {
-      for (const parameter of metadataDrivenParameters) {
-        if (parameter.identity_conflicting) delete params[parameter.name]
-      }
-    }
+    const conflictingNames = isIdentity
+      ? new Set(metadataDrivenParameters.filter((p) => p.identity_conflicting).map((p) => p.name))
+      : new Set<string>()
+    const params: Record<string, unknown> = Object.fromEntries(
+      Object.entries(metadataParams.parameters ?? {}).filter(([key]) => !conflictingNames.has(key)),
+    )
     if (hasEndpointField && endpoint) params.endpoint = endpoint
     if (hasModelNameField && modelName) params.model_name = modelName
     // A pasted key often ends with a newline, which can't be sent in a request header.
@@ -681,11 +681,15 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         .filter((h): h is string => Boolean(h)),
     )
     const candidates = availableTargets.filter(
-      (t) =>
-        isGuiTarget(t) &&
-        getTargetType(t) !== 'RoundRobinTarget' &&
-        !selectedNames.has(t.target_registry_name) &&
-        !(targetIdentifierHash(t) && selectedHashes.has(targetIdentifierHash(t)!)),
+      (t) => {
+        const hash = targetIdentifierHash(t)
+        return (
+          isGuiTarget(t) &&
+          getTargetType(t) !== 'RoundRobinTarget' &&
+          !selectedNames.has(t.target_registry_name) &&
+          !(hash && selectedHashes.has(hash))
+        )
+      },
     )
     // If nothing is selected yet, all non-RRT candidates are eligible
     if (selectedInnerTargets.length === 0) return candidates
@@ -1276,13 +1280,12 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                           }
                           if (next === 'identity') {
                             setApiKey('')
-                            setParameterValues((current) => {
-                              const cleared = { ...current }
-                              for (const parameter of metadataDrivenParameters) {
-                                  if (parameter.identity_conflicting) delete cleared[parameter.name]
-                              }
-                              return cleared
-                            })
+                            const conflictingNames = new Set(
+                              metadataDrivenParameters.filter((p) => p.identity_conflicting).map((p) => p.name),
+                            )
+                            setParameterValues((current) =>
+                              Object.fromEntries(Object.entries(current).filter(([key]) => !conflictingNames.has(key))),
+                            )
                           }
                         }}
                       >

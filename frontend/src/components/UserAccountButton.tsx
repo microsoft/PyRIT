@@ -28,7 +28,7 @@ function MsalAccountButton() {
           appearance="subtle"
           icon={<PersonRegular />}
           onClick={() => {
-            void instance.loginRedirect(buildLoginRequest()).catch((error) => {
+            void instance.loginRedirect(buildLoginRequest()).catch((error: unknown) => {
               console.error('Login redirect failed:', error)
             })
           }}
@@ -63,7 +63,7 @@ function MsalAccountButton() {
             <Button
               appearance="secondary"
               onClick={() => {
-                void instance.logoutRedirect().catch((error) => {
+                void instance.logoutRedirect().catch((error: unknown) => {
                   console.error('Logout redirect failed:', error)
                 })
               }}

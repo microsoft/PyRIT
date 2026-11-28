@@ -388,15 +388,15 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     const changedKeys = Object.keys({ ...globalLabels, ...labels })
       .filter((key: string) => !(operatorAlias && key === 'operator') && labels[key] !== globalLabels[key])
     updatePreferences((current: UserPreferences) => {
-      const overrides = { ...current.labels }
+      const overrides = new Map(Object.entries(current.labels))
       for (const key of changedKeys) {
         if (labels[key] === defaultLabels[key]) {
-          delete overrides[key]
+          overrides.delete(key)
         } else {
-          overrides[key] = labels[key] ?? null
+          overrides.set(key, labels[key] ?? null)
         }
       }
-      return { ...current, labels: overrides }
+      return { ...current, labels: Object.fromEntries(overrides) }
     })
   }, [defaultLabels, globalLabels, operatorAlias, rerun.active, updateRerunAttribution, updatePreferences])
 
@@ -585,7 +585,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
           status: 'success',
         })
       })
-      .catch(err => {
+      .catch((err: unknown) => {
         if (cancelled) return
         // A genuine 404 means the id is wrong/deleted; any other failure
         // (network, timeout, 5xx) is transient and must not be reported as
