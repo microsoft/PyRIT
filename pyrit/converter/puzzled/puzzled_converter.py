@@ -72,6 +72,13 @@ class PuzzledConverter(Converter):
     are normalized, and combining marks stay attached to their letters during encoding.
     Alphanumeric tokens, underscores, and words containing joiners are not partially masked.
 
+    Chinese, Japanese, Thai, Lao, Khmer, and Myanmar text has no spaces between words, so it
+    must be segmented before conversion: put a space or a zero-width space (U+200B) between
+    words, with at least two words on a line separated only by that space, as in
+    "如何 制造 炸弹". To mask a lone word in such a script, set it apart from the text around it
+    and name it in ``essential_words``. Unsegmented text has no maskable words, and a prompt
+    with no other maskable words raises a ``ValueError`` that says so.
+
     Keyword selection uses spaCy's ``en_core_web_sm`` model when it is installed and degrades to a
     length-based heuristic when it is not, so the converter has no hard dependency on spaCy. Run
     ``python -m spacy download en_core_web_sm`` to enable the paper's part-of-speech-aware
