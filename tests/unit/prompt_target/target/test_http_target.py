@@ -432,6 +432,17 @@ def test_parse_raw_http_respects_url_path(patch_central_database):
     assert headers == {"host": "example.com", "content-type": "application/json"}
 
 
+@pytest.mark.parametrize("scheme", ["http://", "https://", "HTTP://", "HTTPS://", "Https://"])
+def test_parse_raw_http_absolute_form_scheme_is_case_insensitive(patch_central_database, scheme: str) -> None:
+    # URL schemes are case-insensitive (RFC 3986 §3.1). A case-sensitive
+    # check appended the absolute URL to the Host header as a path.
+    url = f"{scheme}example.com/api/chat"
+    request = f"POST {url} HTTP/1.1\nHost: proxy.example.com\n\n"
+    target = HTTPTarget(http_request=request)
+    _, _, parsed_url, _, _ = target.parse_raw_http_request(request)
+    assert parsed_url == url
+
+
 async def test_send_prompt_async_client_kwargs(patch_central_database):
     with patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request:
         # Create httpx_client_kwargs to test

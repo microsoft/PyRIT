@@ -459,8 +459,10 @@ class HTTPTarget(PromptTarget):
         path: str,
         headers_dict: dict[str, str],
     ) -> str:
-        # If path is already a full URL, return it as is
-        if path.startswith(("http://", "https://")):
+        # If path is already a full URL, return it as is. URL schemes are
+        # case-insensitive (RFC 3986 §3.1), and an absolute-form request
+        # target may use any casing.
+        if path.lower().startswith(("http://", "https://")):
             return path
 
         http_protocol = "http://"
