@@ -112,6 +112,37 @@ describe('mapMediaUrl', () => {
     })).toEqual({ status: 'preview', kind: 'audio', url })
   })
 
+  it('should treat an extensionless media-route file as download-only', () => {
+    // The backend serves an extensionless file as an application/octet-stream
+    // attachment, so it cannot render inline even though its data type is media.
+    const url = '/api/media?path=%2Fdbdata%2Fseed-prompt-entries%2Fnoext'
+    expect(mapMediaUrl({
+      dataType: 'image_path',
+      value: '/dbdata/seed-prompt-entries/noext',
+      valueUrl: url,
+    })).toEqual({ status: 'unsupported', url })
+    expect(mapMediaUrl({
+      dataType: 'audio_path',
+      value: '/dbdata/seed-prompt-entries/noext',
+      valueUrl: url,
+    })).toEqual({ status: 'unsupported', url })
+    // A .png control from the same route still previews.
+    const pngUrl = '/api/media?path=%2Fdbdata%2Fseed-prompt-entries%2Fpic.png'
+    expect(mapMediaUrl({
+      dataType: 'image_path',
+      value: '/dbdata/seed-prompt-entries/pic.png',
+      valueUrl: pngUrl,
+    })).toEqual({ status: 'preview', kind: 'image', url: pngUrl })
+    // An extensionless blob URL still previews: the remote server supplies
+    // the content type, so the unknown kind is not the route's attachment.
+    const blobUrl = 'blob:http://127.0.0.1:3000/11111111-1111-1111-1111-111111111111'
+    expect(mapMediaUrl({
+      dataType: 'image_path',
+      value: blobUrl,
+      valueUrl: blobUrl,
+    })).toEqual({ status: 'preview', kind: 'image', url: blobUrl })
+  })
+
   it('should return missing when a media value is empty', () => {
     expect(mapMediaUrl({ dataType: 'video_path', value: '   ', valueUrl: null })).toEqual({ status: 'missing' })
   })
