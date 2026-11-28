@@ -721,6 +721,7 @@ class TestAdversarialReplyParsedConsistentlyAcrossAttacks:
 # persona (set as ``AttackAdversarialConfig.system_prompt``).
 _NON_ENUM_ADVERSARIAL_SYSTEM_PROMPTS = [
     EXECUTOR_SEED_PROMPT_PATH / "crescendo" / "split_payload.yaml",
+    EXECUTOR_SEED_PROMPT_PATH / "crescendo" / "echo_chamber.yaml",
     EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "crescendo_simulated.yaml",
     EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "crescendo_movie_director.yaml",
     EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "crescendo_history_lecture.yaml",

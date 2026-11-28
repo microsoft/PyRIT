@@ -142,6 +142,15 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             ),
         ),
         AttackTechniqueFactory(
+            name="echo_chamber",
+            attack_class=CrescendoAttack,
+            description="Has the target expand on its own replies, from neutral keywords toward the objective.",
+            technique_tags=["multi_turn"],
+            adversarial_system_prompt=SeedPrompt.from_yaml_file(
+                EXECUTOR_SEED_PROMPT_PATH / "crescendo" / "echo_chamber.yaml"
+            ),
+        ),
+        AttackTechniqueFactory(
             name="code_attack_framed",
             attack_class=PromptSendingAttack,
             description="Encodes the objective as code and adds optional code-completion system framing.",

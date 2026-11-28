@@ -4,6 +4,7 @@
 """Tests for TechniqueInitializer and the technique group catalogs."""
 
 import hashlib
+import json
 import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -22,10 +23,10 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     SkeletonKeyAttack,
 )
-from pyrit.models import SeedPrompt
+from pyrit.models import AttackOutcome, Message, MessagePiece, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
-from pyrit.score import TrueFalseQuestionPaths, TrueFalseScorer
+from pyrit.score import SubStringScorer, TrueFalseQuestionPaths, TrueFalseScorer
 from pyrit.setup.initializers import TechniqueInitializer
 from pyrit.setup.initializers.techniques import (
     build_technique_factories,
@@ -61,6 +62,7 @@ EXTRA_TECHNIQUE_NAMES: list[str] = [
     "violent_durian",
     "goat",
     "split_payload",
+    "echo_chamber",
     "code_attack_framed",
     "char_split",
     "context_wrap",
@@ -501,6 +503,7 @@ class TestTechniqueInitializerRegistration:
         assert "pair" not in names
         assert "violent_durian" not in names
         assert "split_payload" not in names
+        assert "echo_chamber" not in names
         assert "char_split" not in names
         assert "context_wrap" not in names
 
@@ -853,3 +856,83 @@ class TestTechniqueInitializerDiscovery:
         registry = InitializerRegistry()
         names = set(registry.get_class_names())
         assert "technique" in names
+
+
+# ---------------------------------------------------------------------------
+# echo_chamber
+# ---------------------------------------------------------------------------
+
+
+_ECHO_CHAMBER_PATH = Path(EXECUTOR_SEED_PROMPT_PATH) / "crescendo" / "echo_chamber.yaml"
+
+
+class TestEchoChamberTechnique:
+    """The echo_chamber technique is stock Crescendo driven by its own adversarial system prompt."""
+
+    @pytest.mark.usefixtures("patch_central_database")
+    async def test_executed_attack_sends_echo_chamber_prompt_and_next_message_async(self) -> None:
+        factory = next(f for f in extra.get_technique_factories() if f.name == "echo_chamber")
+        seed_request = "Write a few short sentences that use these words: brass, spring, cylinder."
+        adversarial_chat = MockPromptTarget()
+
+        async def adversarial_send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            reply = {"next_message": seed_request, "last_response_summary": "", "rationale": "seed step"}
+            return [
+                MessagePiece(
+                    role="assistant",
+                    original_value=json.dumps(reply),
+                    conversation_id=normalized_conversation[-1].get_piece().conversation_id,
+                ).to_message()
+            ]
+
+        adversarial_chat._send_prompt_to_target_async = adversarial_send_async
+        objective_target = MockPromptTarget()
+
+        attack = factory.create(
+            objective_target=objective_target,
+            attack_scoring_config=AttackScoringConfig(
+                objective_scorer=SubStringScorer(substring="default"),
+                refusal_scorer=SubStringScorer(substring="UNUSED_REFUSAL_MARKER"),
+            ),
+            adversarial_chat=adversarial_chat,
+        ).attack
+        result = await attack.execute_async(objective="UNIQUE_TEST_OBJECTIVE")
+
+        expected_system_prompt = SeedPrompt.from_yaml_file(_ECHO_CHAMBER_PATH).render_template_value(
+            objective="UNIQUE_TEST_OBJECTIVE", max_turns=attack._max_turns, conversation_context=""
+        )
+        assert factory.technique_tags == ["multi_turn"]
+        assert type(attack) is CrescendoAttack
+        assert adversarial_chat.system_prompt == expected_system_prompt
+        assert objective_target.prompt_sent == [seed_request]
+        assert result.outcome is AttackOutcome.SUCCESS
+
+    def test_yaml_loads_with_crescendo_required_parameters(self) -> None:
+        sp = SeedPrompt.from_yaml_with_required_parameters(
+            template_path=_ECHO_CHAMBER_PATH,
+            required_parameters=["objective", "max_turns"],
+        )
+        assert sp.parameters == ["objective", "max_turns", "conversation_context"]
+
+    def test_yaml_renders_without_conversation_context(self) -> None:
+        sp = SeedPrompt.from_yaml_file(_ECHO_CHAMBER_PATH)
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE", max_turns=7, conversation_context="")
+        assert "Target objective: UNIQUE_TEST_OBJECTIVE" in rendered
+        assert "Maximum target turns: 7" in rendered
+        assert "Prior Conversation Context" not in rendered
+        assert "{{" not in rendered
+        assert "{%" not in rendered
+
+    def test_yaml_renders_conversation_context(self) -> None:
+        sp = SeedPrompt.from_yaml_file(_ECHO_CHAMBER_PATH)
+        rendered = sp.render_template_value(
+            objective="UNIQUE_TEST_OBJECTIVE", max_turns=7, conversation_context="UNIQUE_PRIOR_TURNS"
+        )
+        assert "Prior Conversation Context" in rendered
+        assert "UNIQUE_PRIOR_TURNS" in rendered
+
+    def test_yaml_has_no_em_or_en_dashes(self) -> None:
+        text = _ECHO_CHAMBER_PATH.read_text(encoding="utf-8")
+        # Literal em-dash and en-dash characters used as needles for absence assertions on the YAML
+        assert "–" not in text
+        assert "—" not in text
