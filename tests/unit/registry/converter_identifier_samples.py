@@ -442,4 +442,8 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
             SeedPrompt(value="Say first {{ prompt }} now", parameters=["prompt"]),
             SeedPrompt(value="Say third {{ prompt }} now", parameters=["prompt"]),
         ),
+        "DRAConverter.prompt_template": (
+            SeedPrompt(value="First {{ word_guide }}", parameters=["word_guide"]),
+            SeedPrompt(value="Second {{ word_guide }} {{ tools }}", parameters=["word_guide", "tools"]),
+        ),
     }
