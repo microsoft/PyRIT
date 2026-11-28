@@ -31,7 +31,7 @@ def _float_values(scores: list[Score]) -> list[float] | None:
         return None
 
 
-def _select_winner(scores: list[Score], float_values: list[float], raw_result: float) -> Score:
+def _select_winner(*, scores: list[Score], float_values: list[float], raw_result: float) -> Score:
     """
     Return the constituent whose value produced the aggregate.
 
@@ -283,7 +283,9 @@ def _create_aggregator_by_category(
                 return [_undetermined_result(scores_list, name=name, metadata=metadata, category=category)]
             raw_result = result_func(float_values)
             if use_selected_score_metadata:
-                selected_score = _select_winner(scores_list, float_values, raw_result)
+                selected_score = _select_winner(
+                    scores=scores_list, float_values=float_values, raw_result=raw_result
+                )
                 metadata.update(selected_score.score_metadata or {})
             result = max(0.0, min(1.0, raw_result))
 
@@ -334,7 +336,11 @@ def _create_aggregator_by_category(
                 continue
             raw_result = result_func(float_values)
             if use_selected_score_metadata:
-                selected_score = _select_winner(category_scores, float_values, raw_result)
+                selected_score = _select_winner(
+                    scores=category_scores,
+                    float_values=float_values,
+                    raw_result=raw_result,
+                )
                 metadata.update(selected_score.score_metadata or {})
             result = max(0.0, min(1.0, raw_result))
 
