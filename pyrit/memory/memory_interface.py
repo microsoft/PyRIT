@@ -1421,7 +1421,7 @@ class MemoryInterface(abc.ABC):
             raise
 
     async def update_finding_async(
-        self, *, operation_id: uuid.UUID, finding_id: uuid.UUID, request: FindingCreate
+        self, *, operation_id: uuid.UUID, finding_id: uuid.UUID, request: FindingCreate, expected_version: int
     ) -> Finding:
         """
         Replace a finding's editable fields, including its parent, without changing identity, creation time, or paths.
@@ -1433,6 +1433,7 @@ class MemoryInterface(abc.ABC):
 
         Raises:
             LookupError: If the finding does not belong to the operation.
+            StaleDataError: If the finding has changed since the caller read it.
             FindingHierarchyError: If the finding would move while it is a step of its parent's paths, or under a
                 parent that is outside the operation, the finding itself, or one of its sub-findings.
         """
@@ -1442,9 +1443,15 @@ class MemoryInterface(abc.ABC):
             entry = await self._get_finding_entry_async(
                 session=session, operation_id=operation_id, finding_id=finding_id
             )
+            if entry.version != expected_version:
+                raise StaleDataError(
+                    "This finding has changed since you opened it. Your edits have not been saved. "
+                    "Copy your changes, then refresh and reopen the finding to review its latest values."
+                )
             if validated.parent_finding_id != entry.parent_finding_id:
                 await validate_move_async(session, entry=entry, parent_id=validated.parent_finding_id)
             entry.set_fields(validated)
+            entry.version += 1
             await session.flush()
             return entry.get_finding()
 

@@ -463,6 +463,7 @@ describe('ScenarioRunPage', () => {
 
   it('shows findings linked to the attack only when there are some', async () => {
     const finding: AttackFindingItem = {
+      version: 1,
       id: 'finding-1', operation_id: RUN.operation_id, operation_name: 'Review operation', evidence_id: 'evidence-1',
       title: 'Protected instructions disclosed', severity: 'important',
       field_values: { description: 'Review the saved response.' }, created_at: RUN.created_at,

@@ -269,12 +269,15 @@ async def update_operation_finding_async(
     even if its field is configured again. Values that haven't changed may use options that no longer exist.
     A finding moves with its sub-findings. Its paths are unchanged.
 
+    Send the ``version`` returned when reading the finding. A successful edit increments it; a stale edit
+    returns 409 without changing the finding. Read the latest values and reconcile the draft before retrying.
+
     Returns:
         Finding: The updated finding.
 
     Raises:
-        HTTPException: 409 when the finding would move while its parent's paths use it, or under itself or one of
-            its sub-findings, and 422 when the values do not fit the active finding fields.
+        HTTPException: 409 for a stale version, or when the finding would move while its parent's paths use it,
+            or under itself or one of its sub-findings; 422 when values do not fit the active finding fields.
     """
     try:
         return await _require_operation_async(

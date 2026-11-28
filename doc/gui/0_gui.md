@@ -379,6 +379,13 @@ Select an operation in the labels bar to associate new chats and scans with it.
 The operation page brings its findings, linked evidence, and execution history
 together.
 
+If another tab saves a finding while you are editing it, your save is rejected
+and your draft stays open. Copy the edits you want to keep, cancel the dialog,
+refresh the page, and reopen the finding to reconcile them with the latest values.
+API clients must include the finding's returned `version` in each update request.
+A successful update returns the next version; a stale version returns HTTP 409.
+SDK callers pass it as `expected_version` to `update_finding_async`.
+
 A finding can be broken into sub-findings, at any depth, to record a
 decomposition such as a multi-step attack. Use **Add sub-finding** on a
 finding, and expand **Sub-findings** to see them, oldest first in the order

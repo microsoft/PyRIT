@@ -111,12 +111,12 @@ def test_finding_text_is_limited(compatibility_headers: dict[str, str], field: s
     created = client.post(path, json=body("x" * 100_000))
     assert created.status_code == 201
     finding_path = f"{path}/{created.json()['id']}"
-    updated = client.put(finding_path, json=body("y" * 100_000))
+    updated = client.put(finding_path, json={"version": 1, **body("y" * 100_000)})
 
     assert updated.status_code == 200
     assert updated.json()["field_values" if nested else field] == ({field: "y" * 100_000} if nested else "y" * 100_000)
     assert client.post(path, json=body("x" * 100_001)).status_code == 422
-    assert client.put(finding_path, json=body("x" * 100_001)).status_code == 422
+    assert client.put(finding_path, json={"version": 1, **body("x" * 100_001)}).status_code == 422
     stored = client.get(path).json()["items"][0]
     assert (stored["field_values"][field] if nested else stored[field]) == "y" * 100_000
 
@@ -273,7 +273,9 @@ def test_finding_api_accepts_and_returns_deprecated_fields(compatibility_headers
 
     edit = {**old, "severity": "low", "severity_other": None, "harm_type": "Malware", "harm_type_other": None}
     with pytest.warns(DeprecationWarning, match=r"FindingUpdateRequest\(\w+=\.\.\.\) is deprecated"):
-        updated = client.put(f"{path}/{created.json()['id']}", json={**edit, "description": ""})
+        updated = client.put(
+            f"{path}/{created.json()['id']}", json={**edit, "description": "", "version": created.json()["version"]}
+        )
     assert updated.status_code == 200
     assert updated.json()["field_values"] == {"harm_type": "Malware"}
     expected = {"description": "", "severity_other": None, "harm_type": "Malware", "harm_type_other": None}
@@ -335,7 +337,7 @@ def test_finding_api_round_trips_field_values_and_drops_blanks(compatibility_hea
     assert finding["severity"] == "Team severity"
     assert finding["field_values"] == {"harm_type": "Malware"}
     assert client.get(path).json()["items"] == [_listed(finding, _row("harm_type", "Harm-type", "Malware"))]
-    updated = client.put(f"{path}/{finding['id']}", json={"title": "Edited", "severity": "low"})
+    updated = client.put(f"{path}/{finding['id']}", json={"version": 1, "title": "Edited", "severity": "low"})
     assert updated.status_code == 200
     assert updated.json()["field_values"] == {}
     assert updated.json()["id"] == finding["id"]
@@ -345,7 +347,9 @@ def test_finding_api_round_trips_field_values_and_drops_blanks(compatibility_hea
         {"severity": "low", "field_values": {"harm_type": 3}},
     ]:
         assert client.post(path, json={"title": "Invalid", **invalid}).status_code == 422
-        assert client.put(f"{path}/{finding['id']}", json={"title": "Invalid", **invalid}).status_code == 422
+        assert (
+            client.put(f"{path}/{finding['id']}", json={"version": 1, "title": "Invalid", **invalid}).status_code == 422
+        )
     assert client.get(path).json()["items"] == [_listed(updated.json())]
 
 
@@ -456,11 +460,13 @@ def test_finding_update_and_delete_preserve_identity_and_operation(
     original = client.post(path, json={"title": "Original", "severity": "low"}).json()
     finding_path = f"{path}/{original['id']}"
     edited = client.put(
-        finding_path, json={"title": "Edited", "severity": "critical", "field_values": {"description": "Notes"}}
+        finding_path,
+        json={"version": 1, "title": "Edited", "severity": "critical", "field_values": {"description": "Notes"}},
     )
     assert edited.status_code == 200
     assert edited.json() == {
         **original,
+        "version": 2,
         "title": "Edited",
         "severity": "critical",
         "field_values": {"description": "Notes"},
@@ -475,7 +481,68 @@ def test_finding_update_and_delete_preserve_identity_and_operation(
     assert client.get(path).json()["items"] == []
     assert client.get(f"/api/operations/{operation['id']}").json() == {**operation, "usage": EMPTY_USAGE}
     assert client.delete(finding_path).status_code == 404
-    assert client.put(finding_path, json={"title": "Missing", "severity": "low"}).status_code == 404
+    assert client.put(finding_path, json={"version": 1, "title": "Missing", "severity": "low"}).status_code == 404
+
+
+@pytest.mark.parametrize("same_field", [False, True])
+def test_stale_finding_edit_preserves_the_other_tabs_changes(
+    compatibility_headers: dict[str, str], same_field: bool
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    operation = client.post("/api/operations", json={"name": "Two tabs"}).json()
+    path = f"/api/operations/{operation['id']}/findings"
+    original = {"title": "Original", "severity": "low", "field_values": {"description": "Original description"}}
+    saved = client.post(path, json=original).json()
+    url = f"{path}/{saved['id']}"
+    first = {**original, "version": saved["version"], "field_values": {"description": "New description"}}
+    assert client.put(url, json=first).status_code == 200
+    stale = {**original, "version": saved["version"]}
+    if same_field:
+        stale["field_values"] = {"description": "Unsaved description"}
+    else:
+        stale["title"] = "Unsaved title"
+    rejected = client.put(url, json=stale)
+    assert rejected.status_code == 409
+    assert "Your edits have not been saved" in rejected.json()["detail"]
+    current = client.get(path).json()["items"][0]
+    assert current["title"] == "Original"
+    assert current["field_values"] == {"description": "New description"}
+    assert current["version"] == 2
+    reconciled = {**first, "title": "Reviewed title", "version": current["version"]}
+    response = client.put(url, json=reconciled)
+    assert response.status_code == 200
+    assert response.json()["version"] == 3
+    assert response.json()["field_values"] == {"description": "New description"}
+
+
+def test_retrying_create_after_an_unchanged_edit_returns_the_current_version(
+    compatibility_headers: dict[str, str],
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    operation = client.post("/api/operations", json={"name": "Retry create"}).json()
+    path = f"/api/operations/{operation['id']}/findings"
+    fields = {"title": "Original", "severity": "low"}
+    saved = client.post(path, json=fields).json()
+    edited = client.put(f"{path}/{saved['id']}", json={**fields, "version": saved["version"]})
+    assert edited.status_code == 200
+    assert edited.json()["version"] == 2
+    retried = client.post(path, json={**fields, "id": saved["id"]})
+    assert retried.status_code == 201
+    assert retried.json() == edited.json()
+
+
+@pytest.mark.parametrize("version", [None, 0, -1, True, "1", 1.5])
+def test_finding_update_requires_a_positive_integer_version(
+    compatibility_headers: dict[str, str], version: object
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    operation = client.post("/api/operations", json={"name": "Version required"}).json()
+    path = f"/api/operations/{operation['id']}/findings"
+    fields = {"title": "Original", "severity": "low"}
+    saved = client.post(path, json=fields).json()
+    body = {**fields, "version": version} if version is not None else fields
+    assert client.put(f"{path}/{saved['id']}", json=body).status_code == 422
+    assert client.get(path).json()["items"][0]["version"] == 1
 
 
 def test_finding_mutations_reject_wrong_operations_and_invalid_fields(
@@ -489,7 +556,7 @@ def test_finding_mutations_reject_wrong_operations_and_invalid_fields(
     body = {"title": "Edited", "severity": "critical"}
     for requested_id in [other_id, str(MISSING_ID)]:
         wrong_path = f"/api/operations/{requested_id}/findings/{original['id']}"
-        assert client.put(wrong_path, json=body).status_code == 404
+        assert client.put(wrong_path, json={"version": 1, **body}).status_code == 404
         assert client.delete(wrong_path).status_code == 404
     finding_path = f"{path}/{original['id']}"
     for invalid in [
@@ -498,8 +565,8 @@ def test_finding_mutations_reject_wrong_operations_and_invalid_fields(
         {**body, "operation_id": other_id},
         {**body, "created_at": original["created_at"]},
     ]:
-        assert client.put(finding_path, json=invalid).status_code == 422
-    assert TestClient(app).put(finding_path, json=body).status_code != 200
+        assert client.put(finding_path, json={"version": 1, **invalid}).status_code == 422
+    assert TestClient(app).put(finding_path, json={"version": 1, **body}).status_code != 200
     assert TestClient(app).delete(finding_path).status_code != 204
     assert client.get(path).json()["items"] == [_listed(original)]
 
@@ -510,7 +577,12 @@ async def test_update_keeps_an_unchanged_retired_value_async(
     finding = retired_value_finding_async
     response = TestClient(app, headers=compatibility_headers).put(
         f"/api/operations/{finding.operation_id}/findings/{finding.id}",
-        json={"title": "Leak", "severity": "sev1", "field_values": {"steps": "1. Open", "description": "Old text"}},
+        json={
+            "version": 1,
+            "title": "Leak",
+            "severity": "sev1",
+            "field_values": {"steps": "1. Open", "description": "Old text"},
+        },
     )
     assert response.status_code == 200
     stored = await read_finding_async(memory=sqlite_instance, finding=finding)
@@ -524,7 +596,7 @@ async def test_update_rejects_a_changed_retired_value_async(
     client = TestClient(app, headers=compatibility_headers)
     path = f"/api/operations/{finding.operation_id}/findings"
     body = {"title": "Leak", "severity": "sev1", "field_values": {"steps": "1. Open", "description": "New text"}}
-    response = client.put(f"{path}/{finding.id}", json=body)
+    response = client.put(f"{path}/{finding.id}", json={"version": 1, **body})
     assert response.status_code == 422
     assert (
         response.json()["detail"]
@@ -532,7 +604,7 @@ async def test_update_rejects_a_changed_retired_value_async(
     )
     stored = await read_finding_async(memory=sqlite_instance, finding=finding)
     assert stored.field_values == {"steps": "1. Open", "description": "Old text"}
-    assert client.put(f"{path}/{MISSING_ID}", json=body).status_code == 404
+    assert client.put(f"{path}/{MISSING_ID}", json={**body, "version": finding.version}).status_code == 404
 
 
 async def test_update_removes_a_listed_retired_value_async(
@@ -542,6 +614,7 @@ async def test_update_removes_a_listed_retired_value_async(
     response = TestClient(app, headers=compatibility_headers).put(
         f"/api/operations/{finding.operation_id}/findings/{finding.id}",
         json={
+            "version": 1,
             "title": "Leak",
             "severity": "sev1",
             "field_values": {"steps": "1. Open"},
@@ -578,7 +651,7 @@ async def test_update_keeps_a_value_that_a_stale_client_shows_as_retired_async(
     )
     response = TestClient(app, headers=compatibility_headers).put(
         f"/api/operations/{finding.operation_id}/findings/{finding.id}",
-        json={"title": "Leak", "severity": "sev1", **kept},
+        json={"version": 1, "title": "Leak", "severity": "sev1", **kept},
     )
     assert response.status_code == 200
     stored = await read_finding_async(memory=sqlite_instance, finding=finding)
@@ -596,6 +669,7 @@ async def test_update_keeps_retired_values_by_key_beyond_the_value_limit_async(
     response = TestClient(app, headers=compatibility_headers).put(
         f"/api/operations/{operation.id}/findings/{finding.id}",
         json={
+            "version": 1,
             "title": "Leak",
             "severity": "sev1",
             "field_values": {"steps": "1. Open"},
@@ -613,7 +687,7 @@ async def test_update_keeps_an_unchanged_severity_that_is_no_longer_an_option_as
     finding = unmatched_severity_finding_async
     response = TestClient(app, headers=compatibility_headers).put(
         f"/api/operations/{finding.operation_id}/findings/{finding.id}",
-        json={"title": "Leak", "severity": "low", "field_values": {"steps": "1. Open"}},
+        json={"version": 1, "title": "Leak", "severity": "low", "field_values": {"steps": "1. Open"}},
     )
     assert response.status_code == 200
     assert response.json()["severity"] == "low"
@@ -626,7 +700,7 @@ async def test_update_rejects_changing_to_another_severity_that_is_not_an_option
     finding = unmatched_severity_finding_async
     response = TestClient(app, headers=compatibility_headers).put(
         f"/api/operations/{finding.operation_id}/findings/{finding.id}",
-        json={"title": "Leak", "severity": "medium", "field_values": {"steps": "1. Open"}},
+        json={"version": 1, "title": "Leak", "severity": "medium", "field_values": {"steps": "1. Open"}},
     )
     assert response.status_code == 422
     assert response.json()["detail"] == "Severity has no option 'medium'."

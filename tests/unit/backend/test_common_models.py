@@ -617,12 +617,13 @@ def test_finding_requests_reject_values_over_limits(model: type[BaseModel], over
 @pytest.mark.parametrize("keys", [["k" * (MAX_IDENTIFIER_LENGTH + 1)], [f"key{i}" for i in range(MAX_ITEMS + 1)]])
 def test_finding_update_request_rejects_retired_keys_over_limits(field: str, keys: list[str]) -> None:
     with pytest.raises(ValidationError):
-        FindingUpdateRequest.model_validate({"title": "Finding", "severity": "moderate", field: keys})
+        FindingUpdateRequest.model_validate({"version": 1, "title": "Finding", "severity": "moderate", field: keys})
 
 
 def test_finding_update_request_accepts_values_at_limits() -> None:
     keys = [f"{i:0{MAX_IDENTIFIER_LENGTH}d}" for i in range(MAX_ITEMS)]
     request = FindingUpdateRequest(
+        version=1,
         title="t" * MAX_TEXT_LENGTH,
         severity="s" * MAX_TEXT_LENGTH,
         field_values={key: "v" * MAX_TEXT_LENGTH if key == keys[0] else "v" for key in keys},

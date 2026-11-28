@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from sqlalchemy.dialects import mssql
 from sqlalchemy.engine import ScalarResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
 from pyrit.memory import (
     AttackResultEntry,
@@ -31,6 +33,32 @@ from pyrit.models import Finding, FindingCreate, FindingEvidence, Operation
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
 SEVERITY_ORDER = ["critical", "important", "moderate", "low", "informational"]
+
+
+async def test_concurrent_finding_edits_accept_only_one_version(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Concurrent edits"))
+    finding = await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=operation.id, title="Original", severity="low")
+    )
+    edits = [
+        FindingCreate(title="Title edit", severity="low"),
+        FindingCreate(title="Original", severity="low", field_values={"description": "Description edit"}),
+    ]
+    results = await asyncio.gather(
+        *(
+            sqlite_instance.update_finding_async(
+                operation_id=operation.id, finding_id=finding.id, request=edit, expected_version=finding.version
+            )
+            for edit in edits
+        ),
+        return_exceptions=True,
+    )
+    accepted = [result for result in results if isinstance(result, Finding)]
+    assert len(accepted) == 1
+    assert sum(isinstance(result, StaleDataError) for result in results) == 1
+    stored = await sqlite_instance.get_finding_async(operation_id=operation.id, finding_id=finding.id)
+    assert stored == accepted[0]
+    assert stored.version == 2
 
 
 async def test_operations_are_unique_by_trimmed_case_folded_name(sqlite_instance: SQLiteMemory) -> None:
@@ -235,6 +263,7 @@ async def test_update_finding_preserves_identity_and_reorders_severity(sqlite_in
         finding=Finding(operation_id=operation.id, title="Other", severity="moderate")
     )
     updated = await sqlite_instance.update_finding_async(
+        expected_version=original.version,
         operation_id=operation.id,
         finding_id=original.id,
         request=FindingCreate(title="Edited", severity="critical", field_values={"description": "Notes"}),
@@ -258,6 +287,7 @@ async def test_update_finding_replaces_field_values_without_losing_evidence(sqli
     )
     assert saved == original
     updated = await sqlite_instance.update_finding_async(
+        expected_version=saved.version,
         operation_id=operation.id,
         finding_id=saved.id,
         request=FindingCreate(title="Values", severity="low", field_values={"a": "1"}),
@@ -313,6 +343,7 @@ async def test_finding_mutations_are_scoped_and_delete_only_the_finding(sqlite_i
     )
     with pytest.raises(LookupError, match="not found"):
         await sqlite_instance.update_finding_async(
+            expected_version=original.version,
             operation_id=other.id,
             finding_id=original.id,
             request=FindingCreate(title="Wrong operation", severity="critical"),
@@ -334,7 +365,9 @@ async def test_update_finding_validates_before_mutation(sqlite_instance: SQLiteM
     )
     invalid = FindingCreate(title="Valid", severity="low").model_copy(update={"title": " "})
     with pytest.raises(ValueError):
-        await sqlite_instance.update_finding_async(operation_id=operation.id, finding_id=original.id, request=invalid)
+        await sqlite_instance.update_finding_async(
+            expected_version=original.version, operation_id=operation.id, finding_id=original.id, request=invalid
+        )
     assert await sqlite_instance.get_findings_async() == [original]
 
 

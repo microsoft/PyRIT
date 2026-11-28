@@ -2687,6 +2687,7 @@ export interface FindingCreateRequest extends FindingCreate {
  * again, and a key in `remove_retired_keys` drops that retired value.
  */
 export interface FindingUpdateRequest extends FindingCreate {
+  version: number
   keep_retired_keys: string[]
   remove_retired_keys: string[]
 }
@@ -2754,6 +2755,7 @@ export interface FindingPathsUpdateRequest {
 
 export interface Finding extends FindingCreate {
   id: string
+  version: number
   operation_id: string
   created_at: string
   parent_finding_id: string | null

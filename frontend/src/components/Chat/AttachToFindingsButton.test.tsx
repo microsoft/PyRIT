@@ -19,6 +19,7 @@ jest.mock('@/services/api', () => ({
 
 const OPERATION = { id: 'scan-operation', name: 'Scan operation', created_at: '2026-10-08T12:00:00Z' }
 const FINDING: FindingListItem = {
+  version: 1,
   id: 'finding', operation_id: OPERATION.id, title: 'Proof', severity: 'low', field_values: {},
   created_at: '2026-10-08T12:00:00Z', evidence_count: 0, rows: [], retired: [],
 }

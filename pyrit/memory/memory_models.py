@@ -482,6 +482,7 @@ class FindingEntry(Base):
         CustomUUID, ForeignKey(f"{OperationEntry.__tablename__}.id"), nullable=False
     )
     title: Mapped[str] = mapped_column(Unicode, nullable=False)
+    version: Mapped[int] = mapped_column(INTEGER, nullable=False, default=1, server_default="1")
     # Binary collation keeps SQL Server from merging severities that differ only in case or accents, as SQLite does.
     severity: Mapped[str] = mapped_column(
         Unicode().with_variant(Unicode(collation="Latin1_General_100_BIN2"), "mssql"), nullable=False
@@ -500,6 +501,7 @@ class FindingEntry(Base):
         self.id = validated.id
         self.operation_id = validated.operation_id
         self.created_at = validated.created_at.astimezone(UTC)
+        self.version = 1
         self.set_fields(validated)
         self.set_paths(validated.paths)
 
@@ -541,6 +543,7 @@ class FindingEntry(Base):
             parent_finding_id=self.parent_finding_id,
             demonstrated=self.demonstrated,
             paths=self.get_paths(),
+            version=self.version,
         )
 
 
