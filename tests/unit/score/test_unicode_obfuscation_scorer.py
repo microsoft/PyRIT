@@ -119,6 +119,8 @@ class TestUnicodeObfuscationScorerChannels:
             (chr(0xFE05) + "hello", ""),
             # Consecutive presentation selectors are suspicious.
             (chr(0x2764) + VS16 + VS16, ""),
+            # Emoji presentation selectors attached to ordinary Latin letters are suspicious.
+            ("a" + VS16 + "d" + VS16 + "m" + VS16 + "i" + VS16 + "n", ""),
             # Supplementary IVS attached to ASCII Latin letter is suspicious.
             ("A" + chr(0xE0131), "A"),
         ],
@@ -147,6 +149,12 @@ class TestUnicodeObfuscationScorerChannels:
             ("normal" + PDF + "text" + PDI, 0.85, 2),
             # Directional marks injected into pure ASCII text
             ("ad" + LRM + "min" + RLM, 0.30, 0),
+            # UAX #9: PDF cannot close an outer RLO across an isolate boundary (1 unmatched PDF + 1 unclosed RLO).
+            (RLO + RLI + "text" + PDF + PDI, 0.95, 2),
+            # UAX #9: PDI unwinds an inner RLE opened inside the isolate, so balance is 0 while RLE stays flagged.
+            (RLI + RLE + chr(0x0645) + chr(0x0631) + PDI, 0.70, 0),
+            # Unrelated Arabic text outside an ASCII isolate must not exempt the ASCII isolate.
+            (RLI + "canary" + PDI + " " + chr(0x0645), 0.60, 0),
         ],
     )
     async def test_bidi_override_and_stack_balance(self, text: str, min_score: float, expected_unbalanced: int) -> None:
@@ -164,6 +172,8 @@ class TestUnicodeObfuscationScorerChannels:
             ("mid" + BOM + "bom", ""),
             ("word" + WJ + "joiner" + SHY + "soft", ""),
             ("isolated" + ZWJ + "zwj and" + ZWNJ + "zwnj", ""),
+            # ZWJ adjacent to emoji on only one side must still be flagged.
+            ("a" + ZWJ + chr(0x1F60A), ""),
             ("cover" + _encode_sneaky_bits("hidden"), "hidden"),
         ],
     )
@@ -245,7 +255,11 @@ class TestUnicodeObfuscationFalsePositiveGuards:
             + chr(0x1F4BB)
             + " and "
             + chr(0x2764)
-            + VS16,
+            + VS16
+            + " and "
+            + "1"
+            + VS16
+            + chr(0x20E3),
             # Legitimate single CJK Ideographic Variation Selector.
             "Variant kanji: " + chr(0x8FBB) + chr(0xE0100),
             # Legitimate Persian ZWNJ and Devanagari ZWJ joiners.
