@@ -7,6 +7,7 @@ import pytest
 
 from pyrit.common.text_helper import graphemes
 from pyrit.converter import BidiSwapConverter, ConverterResult
+from pyrit.converter.bidi_swap_converter import _is_swappable
 
 _LRO = chr(0x202D)
 _RLO = chr(0x202E)
@@ -150,3 +151,87 @@ def test_identifier_includes_budget_and_seed() -> None:
 
     assert params["budget"] == 2
     assert params["seed"] == 4
+
+
+_NEWLINE = chr(0x0A)
+_CARRIAGE_RETURN = chr(0x0D)
+_TAB = chr(0x09)
+_LINE_SEPARATOR = chr(0x2028)
+_PARAGRAPH_SEPARATOR = chr(0x2029)
+
+
+@pytest.mark.parametrize(
+    "separator",
+    [_NEWLINE, _CARRIAGE_RETURN + _NEWLINE, _TAB, _LINE_SEPARATOR, _PARAGRAPH_SEPARATOR],
+)
+async def test_convert_async_never_swaps_a_separator(separator: str) -> None:
+    prompt = f"a{separator}"
+
+    result = await BidiSwapConverter(seed=0).convert_async(prompt=prompt)
+
+    assert result.output_text == prompt
+
+
+async def test_convert_async_swaps_on_both_sides_of_a_newline() -> None:
+    result = await BidiSwapConverter(budget=5, seed=0).convert_async(prompt=f"ab{_NEWLINE}cd")
+
+    assert result.output_text == _swap("a", "b") + _NEWLINE + _swap("c", "d")
+
+
+async def test_convert_async_keeps_crlf_whole_and_unswapped() -> None:
+    result = await BidiSwapConverter(budget=5, seed=0).convert_async(prompt=f"ab{_CARRIAGE_RETURN}{_NEWLINE}cd")
+
+    assert result.output_text == _swap("a", "b") + _CARRIAGE_RETURN + _NEWLINE + _swap("c", "d")
+
+
+async def test_convert_async_separator_limits_how_many_pairs_fit() -> None:
+    result = await BidiSwapConverter(budget=5, seed=0).convert_async(prompt=f"abc{_NEWLINE}d")
+
+    assert result.output_text.count(_RLO) == 1
+    assert _strip_controls(result.output_text) in {f"bac{_NEWLINE}d", f"acb{_NEWLINE}d"}
+
+
+async def test_convert_async_reaches_every_placement_around_separators() -> None:
+    prompt = f"abc{_NEWLINE}def"
+    placements = set()
+    for seed in range(200):
+        result = await BidiSwapConverter(seed=seed).convert_async(prompt=prompt)
+        placements.add(_strip_controls(result.output_text))
+
+    assert placements == {
+        f"bac{_NEWLINE}def",
+        f"acb{_NEWLINE}def",
+        f"abc{_NEWLINE}edf",
+        f"abc{_NEWLINE}dfe",
+    }
+
+
+async def test_convert_async_picks_placements_uniformly() -> None:
+    prompt = "abcdef"
+    counts: dict[str, int] = {}
+    for seed in range(600):
+        result = await BidiSwapConverter(budget=2, seed=seed).convert_async(prompt=prompt)
+        placement = _strip_controls(result.output_text)
+        counts[placement] = counts.get(placement, 0) + 1
+
+    # Two non-overlapping pairs fit in six characters in six ways, so each should appear about 100 times.
+    assert len(counts) == 6
+    assert all(60 <= count <= 140 for count in counts.values())
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("", 0),
+        ("a", 0),
+        ("abcd", 2),
+        ("abcde", 2),
+        (f"abc{_NEWLINE}def", 2),
+        (f"a{_NEWLINE}b{_NEWLINE}c", 0),
+        (f"ab{_TAB}cd", 2),
+    ],
+)
+def test_max_pair_count_counts_pairs_between_separators(prompt: str, expected: int) -> None:
+    swappable = [_is_swappable(cluster) for cluster in graphemes(prompt)]
+
+    assert BidiSwapConverter._max_pair_count(swappable=swappable) == expected
