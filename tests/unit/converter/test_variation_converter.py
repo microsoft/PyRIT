@@ -27,6 +27,11 @@ def test_prompt_variation_init_templates_not_null(sqlite_instance):
     [
         "Invalid Json",
         "{'str' : 'json not formatted correctly'}",
+        '"a variation that is not in a list"',
+        "[null]",
+        '[["nested", "list"]]',
+        '[{"variation": "an object"}]',
+        "[5]",
     ],
 )
 async def test_variation_converter_send_prompt_async_bad_json_exception_retries(converted_value, sqlite_instance):

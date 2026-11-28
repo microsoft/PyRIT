@@ -99,6 +99,9 @@ class VariationConverter(LLMGenericTextConverter):
         cleaned = remove_markdown_json(response_text)
         try:
             parsed = json.loads(cleaned)
-            return str(parsed[0])
-        except (json.JSONDecodeError, IndexError, KeyError, TypeError):
-            raise InvalidJsonException(message=f"Invalid JSON response: {cleaned}") from None
+        except json.JSONDecodeError:
+            parsed = None
+        # A JSON string can be indexed too, so check the shape before taking the first item.
+        if not isinstance(parsed, list) or not parsed or not isinstance(parsed[0], str):
+            raise InvalidJsonException(message=f"Invalid JSON response: {cleaned}")
+        return parsed[0]
