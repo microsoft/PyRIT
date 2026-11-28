@@ -227,9 +227,15 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         self._use_score_as_feedback = attack_scoring_config.use_score_as_feedback
         self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
 
-        # Initialize refusal scorer - use the one from config if provided, otherwise create default
+        # Initialize refusal scorer - use the one from config if provided, otherwise create default.
+        # Crescendo's early turns intentionally ask benign or off-objective stepping-stone questions
+        # whose cooperative answers may appear unrelated to context.objective, so use a
+        # Crescendo-specific rubric that only flags explicit refusals.
         self._refusal_scorer = attack_scoring_config.refusal_scorer or SelfAskRefusalScorer(
             chat_target=attack_adversarial_config.target,
+            system_prompt=SeedPrompt.from_yaml_file(
+                Path(EXECUTOR_SEED_PROMPT_PATH) / "crescendo" / "refusal_scorer.yaml"
+            ),
         )
 
         # Initialize adversarial configuration
