@@ -23,10 +23,12 @@
 # coaxed into revealing its own system prompt), package-hallucination probes (which test whether a
 # target recommends non-existent packages that an attacker could squat), an audio probe (which
 # delivers spoken jailbreaks to multimodal targets), FigStep visual jailbreaks (which place
-# harmful instructions in images), a repetition probe (which detects unexpected continuation
-# after repeated text), ProPILE privacy probes (which test whether a target completes
-# personal data that a prompt withholds), and leak-replay probes (which test whether a target
-# can fill in names masked out of passages it may have seen in training).
+# harmful instructions in images), Bad Characters probes (which test whether refusals hold when a
+# harmful request carries a few imperceptible character changes), a repetition probe (which
+# detects unexpected continuation after repeated text), ProPILE privacy probes (which test
+# whether a target completes personal data that a prompt withholds), and leak-replay probes
+# (which test whether a target can fill in names masked out of passages it may have seen in
+# training).
 #
 # For full programming details, see the
 # [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb).
@@ -65,6 +67,8 @@ from pyrit.scenario.garak import (
     ApiKey,
     ApiKeyDatasetConfiguration,
     ApiKeyTechnique,
+    BadCharacters,
+    BadCharactersTechnique,
     Divergence,
     DivergenceDatasetConfiguration,
     DivergenceTechnique,
@@ -210,6 +214,54 @@ print(f"Atomic attacks: {figstep_scenario.atomic_attack_count}")
 figstep_result = await figstep_scenario.run_async()  # type: ignore
 
 await output_scenario_async(figstep_result)
+
+# %% [markdown]
+# ## BadCharacters
+#
+# Tests whether a refusal still holds when a harmful request carries a few character changes that a
+# reader can't see [@boucher2022badcharacters]. Each technique applies one perturbation category
+# from Garak's BadCharacters probe, and makes one change per prompt by default:
+#
+# - `invisible` inserts a zero-width space, non-joiner, or joiner.
+# - `homoglyph` replaces a character with a Unicode look-alike.
+# - `reordering` stores two adjacent characters swapped behind bidirectional controls, so they still
+#   display in order.
+# - `deletion` inserts a character followed by a backspace.
+#
+# The default run uses every technique on up to 10 HarmBench objectives and scores whether the
+# response completes the objective. Changes go at random positions, so set a seed for repeatable
+# runs. Pass `perturbation_budget` to the constructor to make more changes per prompt.
+#
+# **CLI examples:**
+#
+# ```bash
+# pyrit_scan run garak.bad_characters --target openai_chat --max-total 1
+# pyrit_scan run garak.bad_characters --target openai_chat --techniques homoglyph deletion
+# ```
+#
+# > **Note:** By default, PyRIT also sends each sampled objective unchanged. Use
+# > `--include-baseline False` to omit this comparison.
+
+# %%
+bad_characters_dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="harmbench")], max_total=1)
+
+bad_characters_scenario = BadCharacters()
+bad_characters_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [BadCharactersTechnique.Homoglyph],
+        "dataset_config": bad_characters_dataset_config,
+        "include_baseline": False,
+    }
+)
+await bad_characters_scenario.initialize_async()  # type: ignore
+
+print(f"Scenario: {bad_characters_scenario.name}")
+print(f"Atomic attacks: {bad_characters_scenario.atomic_attack_count}")
+
+bad_characters_result = await bad_characters_scenario.run_async()  # type: ignore
+
+await output_scenario_async(bad_characters_result)
 
 # %% [markdown]
 # ## WebInjection
