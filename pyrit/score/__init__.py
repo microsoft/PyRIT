@@ -140,6 +140,7 @@ if TYPE_CHECKING:
         CyberSecEvalPromptInjectionScorer,
         render_cyberseceval_prompt_injection_prompt,
     )
+    from pyrit.score.true_false.decision_matches_scorer import DecisionMatchesScorer
     from pyrit.score.true_false.decoding_scorer import DecodingScorer
     from pyrit.score.true_false.file_write_scorer import FileWriteScorer
     from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
@@ -256,6 +257,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AgentThreatRulesScorer": "pyrit.score.true_false.regex.agent_threat_rules_scorer",
     "CredentialLeakScorer": "pyrit.score.true_false.regex.credential_leak_scorer",
     "CyberSecEvalPromptInjectionScorer": "pyrit.score.true_false.cyberseceval_prompt_injection_scorer",
+    "DecisionMatchesScorer": "pyrit.score.true_false.decision_matches_scorer",
     "DecisionScorer": "pyrit.score.float_scale.decision_scorer",
     "DecodingScorer": "pyrit.score.true_false.decoding_scorer",
     "DivergenceScorer": "pyrit.score.true_false.regex.divergence_scorer",
