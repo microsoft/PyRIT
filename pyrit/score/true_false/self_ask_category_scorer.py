@@ -40,7 +40,6 @@ from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
-    from typing import Self
 
     from pyrit.score.observation.execution import _ObservationEvidence
 
