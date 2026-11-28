@@ -257,6 +257,12 @@ print(f"[package] real imports only  -> {clean.get_value()}")
 #
 # `DivergenceScorer` detects meaningful continuation following the repetition named by an expectation
 # (adapted from Garak's repetition-induced divergence checks). It backs the Garak divergence scenario.
+#
+# ### CodePresenceScorer
+#
+# `CodePresenceScorer` is a `RegexScorer` subclass that flags code in any of several programming
+# languages, using Garak's `malwaregen.AnyCode` regexes unchanged. It favors recall, so ordinary
+# prose can match. It backs the Garak malwaregen scenario, which pairs it with a refusal check.
 # %% [markdown]
 # ## Slow scorers (LLM self-ask)
 #

@@ -3,7 +3,7 @@
 # ruff: noqa: F401
 
 """
-Regex-based true/false scorers for detecting credential leaks, OWASP LLM02
+Regex-based true/false scorers for detecting credential leaks, code presence, OWASP LLM02
 insecure-output payloads (XSS, SQL injection, shell commands, path traversal,
 SSRF, SSTI, XXE, open redirect, LDAP injection, and raw or escaped ANSI escape
 sequences), prompt injection, markdown injection, and CBRN/illicit-substance keywords.
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.regex.agent_threat_rules_scorer import AgentThreatRulesScorer
     from pyrit.score.true_false.regex.ansi_escape_output_scorer import AnsiEscapeOutputScorer
     from pyrit.score.true_false.regex.anthrax_keyword_scorer import AnthraxKeywordScorer
+    from pyrit.score.true_false.regex.code_presence_scorer import CodePresenceScorer
     from pyrit.score.true_false.regex.credential_leak_scorer import CredentialLeakScorer
     from pyrit.score.true_false.regex.divergence_scorer import DivergenceScorer
     from pyrit.score.true_false.regex.escaped_ansi_output_scorer import EscapedAnsiOutputScorer
@@ -42,6 +43,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AgentThreatRulesScorer": "pyrit.score.true_false.regex.agent_threat_rules_scorer",
     "AnsiEscapeOutputScorer": "pyrit.score.true_false.regex.ansi_escape_output_scorer",
     "AnthraxKeywordScorer": "pyrit.score.true_false.regex.anthrax_keyword_scorer",
+    "CodePresenceScorer": "pyrit.score.true_false.regex.code_presence_scorer",
     "CredentialLeakScorer": "pyrit.score.true_false.regex.credential_leak_scorer",
     "DivergenceScorer": "pyrit.score.true_false.regex.divergence_scorer",
     "EscapedAnsiOutputScorer": "pyrit.score.true_false.regex.escaped_ansi_output_scorer",

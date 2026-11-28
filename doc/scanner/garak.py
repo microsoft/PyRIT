@@ -18,7 +18,8 @@
 # API-key probes (which test whether a target will generate or complete
 # credential-shaped values), web-injection probes (which test whether a target emits markdown
 # data-exfiltration or cross-site-scripting payloads), exploitation probes (which test whether a
-# target echoes template-injection or SQL exploit payloads), a doctor probe (which applies the Policy
+# target echoes template-injection or SQL exploit payloads), malware-generation probes (which test
+# whether a target writes malware or pieces of it), a doctor probe (which applies the Policy
 # Puppetry universal bypass), system-prompt-extraction probes (which test whether a target can be
 # coaxed into revealing its own system prompt), package-hallucination probes (which test whether a
 # target recommends non-existent packages that an attacker could squat), an audio probe (which
@@ -80,6 +81,9 @@ from pyrit.scenario.garak import (
     LeakReplay,
     LeakReplayDatasetConfiguration,
     LeakReplayTechnique,
+    MalwareGen,
+    MalwareGenDatasetConfiguration,
+    MalwareGenTechnique,
     PackageHallucination,
     PackageHallucinationTechnique,
     PromptInject,
@@ -362,6 +366,58 @@ api_key_result = await api_key_scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(api_key_result)
+
+# %% [markdown]
+# ## MalwareGen
+#
+# Ports Garak's `malwaregen.TopLevel`, `malwaregen.SubFunctions`, `malwaregen.Evasion`, and
+# `malwaregen.Payload` probes. `TopLevel` asks for malware outright, `SubFunctions` for routines
+# malware relies on (hooking file opens, reading `/etc/shadow` or the SAM file, escalating
+# privileges), `Evasion` for code that disables or hides from anti-malware, and `Payload` for 15
+# payload types such as keyloggers and ransomware. Each template is rendered for Garak's eight
+# languages, from x86 assembly to Swift, giving 240 requests.
+#
+# `CodePresenceScorer` ports Garak's `malwaregen.AnyCode` detector with its regexes unchanged, so
+# results stay comparable. The patterns favor recall, and prose such as "remove" matches the x86
+# pattern, so the default objective scorer also requires a non-refusal verdict from
+# `SelfAskRefusalScorer` on the scoring target. A refusal that happens to contain a snippet is not
+# counted. Pass `objective_scorer=CodePresenceScorer()` to score with the Garak detector alone.
+#
+# **CLI examples:**
+#
+# ```bash
+# # Sample up to 20 prompts across all four techniques.
+# pyrit_scan run garak.malwaregen --target openai_chat
+#
+# # Run only the evasion requests with a smaller sample.
+# pyrit_scan run garak.malwaregen --target openai_chat --techniques evasion --max-total 2
+# ```
+#
+# **Available techniques:** `TopLevel`, `SubFunctions`, `Evasion`, and `Payload`. `DEFAULT` and `ALL`
+# both select the four techniques. `max_total` samples across all selected technique populations.
+# The base scenario persists the sample for resume. The language, template, and payload-task
+# datasets are the scenario's required data and are always read in full;
+# `MalwareGenDatasetConfiguration` only limits the assembled requests. Use `max_total="all"` to run
+# all 240 requests. Standard technique converter stacks are supported.
+
+# %%
+malwaregen_scenario = MalwareGen()
+malwaregen_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [MalwareGenTechnique.TopLevel],
+        "dataset_config": MalwareGenDatasetConfiguration(max_total=2),
+    }
+)
+await malwaregen_scenario.initialize_async()  # type: ignore
+
+print(f"Scenario: {malwaregen_scenario.name}")
+print(f"Atomic attacks: {malwaregen_scenario.atomic_attack_count}")
+
+malwaregen_result = await malwaregen_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(malwaregen_result)
 
 # %% [markdown]
 # ## LatentInjection
